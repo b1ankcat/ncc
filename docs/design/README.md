@@ -1,0 +1,244 @@
+# NCC 语言设计文档索引
+
+NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计哲学简化语法，统一元编程机制。
+
+## 快速导航
+
+- **新手入门**: 从 [00-overview.md](00-overview.md) 开始
+- **核心特性**: 阅读 [05-comp.md](05-comp.md) 了解 `comp` 系统
+- **实战示例**: 查看 [12-examples.md](12-examples.md)
+- **语言对比**: 参考 [13-comparison.md](13-comparison.md)
+
+## 文档结构
+
+### 基础概念
+
+- **[00-overview.md](00-overview.md)** - 核心理念与设计原则
+  - 语法基线：C++26 只删不加
+  - 唯三例外：`comp`、tagged enum、扩展 `import`
+  - 设计原则与哲学
+
+- **[01-modules.md](01-modules.md)** - 模块系统
+  - 删除头文件和 namespace
+  - 模块定义与使用
+  - 核心库（println、format、日志）
+
+- **[02-types.md](02-types.md)** - 类型系统
+  - 基础类型（包含 AI/ML 低精度类型）
+  - 字符串设计（UTF-8 + COW + SSO）
+  - Tagged enum（携带数据的枚举）
+  - Optional 类型
+
+### 核心机制
+
+- **[03-memory.md](03-memory.md)** - 内存管理
+  - 聚合初始化 + 构造函数（RAII）
+  - Rule of Zero（默认拷贝，move 显式化）
+  - 智能指针（unique_ptr/shared_ptr/weak_ptr）
+  - 引用和指针（标准 C++ 语义）
+
+- **[04-reflection.md](04-reflection.md)** - 反射系统
+  - 统一的反射 API（无"静态/动态"之分）
+  - 编译期代码生成
+  - 多态对象的运行时类型查询
+
+- **[05-comp.md](05-comp.md)** - comp 编译期计算
+  - `comp` 关键字（替代 constexpr/consteval）
+  - 泛型定义（`comp` 函数 + `type` 参数）
+  - `<>` vs `()` 调用区分
+  - 批量处理与代码生成
+
+- **[06-casting.md](06-casting.md)** - 类型转换
+  - `cast<T>` 统一转换函数
+  - `is<T>` 类型检查
+  - `comp bool` 函数替代 `concept`
+
+- **[07-interfaces.md](07-interfaces.md)** - 接口系统
+  - 抽象基类 + 纯虚函数
+  - 接口与反射结合
+
+- **[08-concurrency.md](08-concurrency.md)** - 并发与多线程
+  - 轻量级任务（Goroutine 风格）
+  - 通道与 Select
+  - 结构化并发
+  - GPU 并行与异构计算
+  - 并发原语与任务调度（不增加额外借用或数据竞争检查）
+
+### 工具链
+
+- **[09-compiler.md](09-compiler.md)** - 编译器架构
+  - C99 后端（第一阶段）
+  - LLVM 后端（第二阶段）
+  - 增量编译与并行编译
+  - 错误报告
+
+- **[10-packages.md](10-packages.md)** - 包管理系统
+  - package.toml 配置
+  - 依赖解析（MVS 算法）
+  - 全局缓存（内容寻址）
+  - 循环依赖和幽灵依赖处理
+  - ccc 命令行工具
+
+- **[11-build-system.md](11-build-system.md)** - 构建系统
+  - 构建脚本（build.ccc）
+  - 声明式与命令式 API
+  - 编译配置与 Profiles
+  - 代码生成与外部工具集成
+
+### 参考资料
+
+- **[12-examples.md](12-examples.md)** - 完整示例
+  - 数据结构与反射
+  - HTTP 服务器
+  - 测试框架
+  - 多态与反射结合
+  - AI/ML 低精度计算
+
+- **[13-comparison.md](13-comparison.md)** - 语言对比
+  - vs C++：改进与保留
+  - vs Rust：内存安全取舍
+  - vs Zig：语法基线差异
+  - 代码示例对比
+
+- **[14-summary.md](14-summary.md)** - 总结
+  - 核心价值
+  - 设计哲学
+  - 适用场景
+  - 开发路线图
+  - 贡献指南
+
+## 核心特性速查
+
+本索引只重复总纲中已经批准的规则。包名、构建 API 的成员访问形式，以及并发后端
+选择仍属于未定稿的库设计；相关章节中的示例标有“待确认”，不能视为新增语言语法。
+
+### `comp` 系统
+
+```cpp
+// 编译期函数
+comp int32_t square(int32_t x) {
+    return x * x;
+}
+
+// 泛型类型
+comp type Vector(type T) { /* ... */ }
+Vector<int32_t> v;  // <> 触发编译期调用 Vector(^^int32_t)
+
+// 泛型函数
+comp fn max<type T>(a: T, b: T) -> T {
+    return a > b ? a : b;
+}
+```
+
+### 反射
+
+```cpp
+comp {
+    auto T = ^^User;
+    for (auto field : nonstatic_data_members_of(T)) {
+        println("{}: {}", name_of(field), size_of(type_of(field)));
+    }
+}
+```
+
+### 类型转换
+
+```cpp
+auto file = cast<File>(writer);  // 返回 Optional<File>
+if (is<File>(writer)) { /* ... */ }
+```
+
+### 包管理
+
+```toml
+[package]
+name = "myapp"
+version = "1.0.0"
+
+[dependencies]
+http = "2.3.1"
+json = "1.5.0"
+```
+
+```cpp
+import http;
+import json;
+
+// 包导出的符号如何避免名称冲突：待确认。
+Client client;
+parse("{...}");
+```
+
+## 设计原则
+
+1. **语法基线 = C++26**：只删不加
+2. **一个问题一个解法**：统一机制，避免多种写法
+3. **编译期优先**：能在编译期做的不拖到运行时
+4. **零成本抽象**：不为不用的功能付出代价
+5. **核心库与用户代码一致**：无特权，无魔法
+6. **标准 C++ 语义**：`T&`/`T*`/Rule of Zero 完全一致
+
+## 快速开始
+
+```bash
+# 安装 ccc
+curl -sSf https://install.ccc-lang.org | sh
+
+# 创建新项目
+ccc new myapp
+cd myapp
+
+# 构建并运行
+ccc run
+```
+
+## 学习路径
+
+### 1. 基础（1-2 天）
+- 阅读 00-overview.md 和 01-modules.md
+- 了解基本语法和模块系统
+- 学习 02-types.md 中的类型系统
+
+### 2. 核心（3-5 天）
+- 深入 05-comp.md 理解编译期计算
+- 学习 04-reflection.md 反射系统
+- 掌握 03-memory.md 内存管理
+
+### 3. 实战（1 周）
+- 阅读 10-examples.md 完整示例
+- 学习 09-packages.md 包管理
+- 实现一个小项目
+
+### 4. 高级（持续）
+- 研究 08-compiler.md 编译器架构
+- 对比 11-comparison.md 与其他语言
+- 参与社区贡献
+
+## 常见问题
+
+### NCC 和 C++ 有什么区别？
+
+NCC 是 C++26 的简化子集，删除了头文件、namespace、template 等冗余特性，用 `comp` 统一编译期计算，并内置包管理。
+
+### NCC 和 Rust 有什么区别？
+
+NCC 没有借用检查器，与 C++ 一样依靠程序员保证内存安全。适合需要 C++ 互操作性和虚表多态的项目。
+
+### 为什么不用 Rust？
+
+如果需要编译期内存安全保证，应该用 Rust。NCC 适合需要 C++ 生态和更简单学习曲线的场景。
+
+### 能和 C++ 代码互操作吗？
+
+可以。NCC 可以调用 C++ 库，也可以导出为 C++ 模块。
+
+## 社区与支持
+
+- **GitHub**: https://github.com/ccc-lang/ccc
+- **文档**: https://docs.ccc-lang.org
+- **论坛**: https://discuss.ccc-lang.org
+- **Discord**: https://discord.gg/ccc-lang
+
+## 许可证
+
+MIT License - 详见 [LICENSE](../../LICENSE)
