@@ -84,6 +84,190 @@ unique_ptr<File>(new File(...));  // 先实例化类型，再调构造函数
 - `is<T>(value)`、`cast<T>(value)` - 类型查询/转换
 - 所有需要类型作为参数的 comp 函数
 
+## 非类型参数
+
+`comp` 函数除了接受类型参数（`type T`），还可以接受编译期常量值参数（对应 C++26 的 non-type template parameters）：
+
+```cpp
+// 固定大小数组
+comp type Array(type T, size_t N) {
+    return [: define_aggregate("Array", {
+        {make_array_type(^^T, N), "data"}
+    }) :];
+}
+
+Array<int32_t, 10> arr;  // 编译期调用 Array(^^int32_t, 10)
+
+// 设备标记（用于 GPU 内存管理）
+enum class Device : int32_t {
+    Cpu = 0,
+    Gpu = 1,
+};
+
+comp type Vector(type T, Device device = Device::Cpu) {
+    if (device == Device::Cpu) {
+        return [: define_aggregate("Vector_Cpu", {
+            {^^T*, "data"},
+            {^^size_t, "size"},
+            {^^size_t, "capacity"}
+        }) :];
+    } else {
+        return [: define_aggregate("Vector_Gpu", {
+            {^^void*, "device_ptr"},
+            {^^size_t, "size"}
+        }) :];
+    }
+}
+
+Vector<float, Device::Gpu> gpu_vec;
+Vector<float> cpu_vec;  // 默认是 Device::Cpu
+```
+
+**调用语法规则：**
+
+`X<TypeArg, ValueArg>` 编译期调用 `X(^^TypeArg, ValueArg)`
+
+- **类型参数自动加 `^^`**：转换为反射 `Info` 对象
+- **非类型参数原样传递**：保持为编译期常量值
+
+**支持的非类型参数类型：**
+- 整数类型（`int32_t`, `size_t` 等）
+- 枚举类型（`enum class Device`）
+- 布尔类型（`bool`）
+- 指针类型（编译期可求值的指针）
+
+## `comp class` - 泛型类定义
+
+`comp class` 是定义泛型类的语法，用于需要类型参数的复杂类定义。
+
+### 基本语法
+
+```cpp
+comp class CustomPtr<type T> {
+    T* ptr_;
+    
+    // 构造函数
+    CustomPtr(T* p = nullptr) : ptr_(p) {}
+    
+    // 析构函数
+    ~CustomPtr() {
+        if (ptr_) {
+            delete ptr_;
+        }
+    }
+    
+    // 禁用拷贝
+    CustomPtr(const CustomPtr&) = delete;
+    CustomPtr& operator=(const CustomPtr&) = delete;
+    
+    // 移动构造
+    CustomPtr(CustomPtr&& other) : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+    
+    // 成员函数
+    T& operator*() { return *ptr_; }
+    T* operator->() { return ptr_; }
+    T* get() { return ptr_; }
+};
+
+// 使用
+CustomPtr<User> p(new User{1, "Alice"});
+println("{}", p->name);
+```
+
+### 内存池分配器示例
+
+```cpp
+comp class MemoryPool<type T> {
+    struct Block {
+        T data;
+        Block* next;
+    };
+    
+    Block* free_list_;
+    Vector<void*> allocated_chunks_;
+    size_t chunk_size_;
+    
+    MemoryPool(size_t chunk_size = 1024) 
+        : free_list_(nullptr), chunk_size_(chunk_size) 
+    {
+        allocate_chunk();
+    }
+    
+    ~MemoryPool() {
+        for (auto chunk : allocated_chunks_) {
+            free(chunk);
+        }
+    }
+    
+    T* allocate() {
+        if (!free_list_) {
+            allocate_chunk();
+        }
+        Block* block = free_list_;
+        free_list_ = block->next;
+        return new (&block->data) T();
+    }
+    
+    void deallocate(T* ptr) {
+        ptr->~T();
+        Block* block = reinterpret_cast<Block*>(ptr);
+        block->next = free_list_;
+        free_list_ = block;
+    }
+    
+private:
+    void allocate_chunk() {
+        void* chunk = malloc(chunk_size_ * sizeof(Block));
+        allocated_chunks_.push(chunk);
+        
+        Block* blocks = static_cast<Block*>(chunk);
+        for (size_t i = 0; i < chunk_size_ - 1; ++i) {
+            blocks[i].next = &blocks[i + 1];
+        }
+        blocks[chunk_size_ - 1].next = free_list_;
+        free_list_ = blocks;
+    }
+};
+```
+
+### 与 `comp type` 的区别
+
+| 特性 | comp type | comp class |
+|------|-----------|------------|
+| 用途 | 简单聚合类型生成 | 复杂泛型类定义 |
+| 语法 | 函数风格 | 类风格 |
+| 成员函数 | 通过反射 API 注入 | 直接定义 |
+| 类型参数使用 | 通过 `^^T` 引用 | 直接使用 `T` |
+| 适用场景 | 编译期代码生成、简单数据结构 | 复杂内存管理、运算符重载、RAII |
+
+### 何时使用 `comp class`
+
+✅ **应该使用 comp class：**
+- 需要自定义构造/析构逻辑
+- 需要运算符重载
+- 需要复杂的成员函数实现
+- 需要 RAII 资源管理
+- 需要类型参数在成员函数中自由使用
+
+✅ **应该使用 comp type：**
+- 只有数据成员的简单聚合
+- 需要根据类型参数生成完全不同的结构布局
+- 编译期批量代码生成
+
+### 核心容器类型
+
+`Vector<T, Device>`, `String`, `HashMap<K, V>` 等核心容器是**编译器内置类型**，
+使用与 `comp class` 相同的实现机制，但由编译器直接提供，享有特殊优化：
+
+- 支持 `Device` 参数（CPU/GPU 内存）
+- SIMD 向量化优化
+- GPU 内核生成
+- 与反射系统深度集成
+
+用户自定义的 `comp class` 类型与核心容器类型地位平等，编译器对待方式一致。
+
 ## 变参泛型
 
 ```cpp

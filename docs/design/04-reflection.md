@@ -83,6 +83,151 @@ comp fn encode_json<type T>(v: const T&) -> String {
 `v.[:field:]` 是反射的成员 splice 语法，直接访问反射得到的数据成员，取代
 自造的字符串拼接 + 代码注入。这份 `encode_json` 同样不区分编译期/运行时。
 
+## Lambda 类型的反射
+
+lambda 类型可以被反射，用于分析捕获列表和签名：
+
+```cpp
+// 反射 lambda 捕获列表
+comp auto captures = captures_of(^^Lambda);  // 返回 Span<Info>
+
+for (auto capture : captures) {
+    auto capture_type = type_of(capture);
+    auto capture_mode = capture_mode_of(capture);  // CaptureMode::ByValue 或 ByReference
+    println("Captured: {} as {}", name_of(capture_type), capture_mode);
+}
+
+// 检查捕获的类型是否满足条件
+comp bool is_gpu_safe(type Lambda) {
+    for (auto capture : captures_of(^^Lambda)) {
+        auto T = type_of(capture);
+        if (!is_gpu_accessible(T)) {
+            return false;
+        }
+    }
+    return true;
+}
+```
+
+**Lambda 反射 API：**
+
+- `captures_of(^^Lambda)` → `Span<Info>` - 返回所有捕获的变量
+- `type_of(capture)` → `Info` - 捕获变量的类型
+- `capture_mode_of(capture)` → `CaptureMode` - 捕获模式（值或引用）
+- `name_of(capture)` → `String` - 捕获变量的原始名称
+
+**CaptureMode 枚举：**
+
+```cpp
+enum class CaptureMode {
+    ByValue,      // [x] 值捕获
+    ByReference,  // [&x] 引用捕获
+};
+```
+
+## 完整类定义：`define_class` API
+
+`define_aggregate` 只能定义数据成员的聚合类型，不支持成员函数、构造/析构函数。
+为了支持完整的泛型类定义，引入 `define_class` API：
+
+```cpp
+comp type Vector(type T, Device device = Device::Cpu) {
+    if (device == Device::Cpu) {
+        return [: define_class("Vector_Cpu", {
+            // 数据成员
+            .data_members = {
+                data_member_spec(^^T*, {.name = "data_"}),
+                data_member_spec(^^size_t, {.name = "size_"}),
+                data_member_spec(^^size_t, {.name = "capacity_"}),
+            },
+            // 构造函数
+            .constructors = {
+                // 默认构造
+                constructor_spec({}, [](auto& self) {
+                    self.data_ = nullptr;
+                    self.size_ = 0;
+                    self.capacity_ = 0;
+                }),
+                // 带大小构造
+                constructor_spec({^^size_t}, [](auto& self, size_t n) {
+                    self.data_ = (T*)malloc(n * sizeof(T));
+                    self.size_ = n;
+                    self.capacity_ = n;
+                }),
+            },
+            // 析构函数
+            .destructor = [](auto& self) {
+                if (self.data_) {
+                    free(self.data_);
+                }
+            },
+            // 成员函数
+            .methods = {
+                method_spec("size", {}, ^^size_t, [](const auto& self) {
+                    return self.size_;
+                }),
+                method_spec("push", {^^T}, ^^void, [](auto& self, T value) {
+                    // 扩容逻辑...
+                    self.data_[self.size_++] = value;
+                }),
+                method_spec("to_device", {}, ^^Vector<T, Device::Gpu>, [](const auto& self) {
+                    // 分配 GPU 内存并拷贝
+                    Vector<T, Device::Gpu> result(self.size_);
+                    gpu_memcpy(result.device_ptr_, self.data_, self.size_ * sizeof(T));
+                    return result;
+                }),
+            },
+        }) :];
+    } else {
+        return [: define_class("Vector_Gpu", {
+            .data_members = {
+                data_member_spec(^^void*, {.name = "device_ptr_"}),
+                data_member_spec(^^size_t, {.name = "size_"}),
+            },
+            .constructors = {
+                constructor_spec({^^size_t}, [](auto& self, size_t n) {
+                    self.device_ptr_ = gpu_malloc(n * sizeof(T));
+                    self.size_ = n;
+                }),
+            },
+            .destructor = [](auto& self) {
+                if (self.device_ptr_) {
+                    gpu_free(self.device_ptr_);
+                }
+            },
+            .methods = {
+                method_spec("size", {}, ^^size_t, [](const auto& self) {
+                    return self.size_;
+                }),
+                method_spec("to_host", {}, ^^Vector<T, Device::Cpu>, [](const auto& self) {
+                    Vector<T, Device::Cpu> result(self.size_);
+                    gpu_memcpy_to_host(result.data_, self.device_ptr_, self.size_ * sizeof(T));
+                    return result;
+                }),
+            },
+        }) :];
+    }
+}
+```
+
+**`define_class` 参数说明：**
+
+- `.data_members` - 数据成员列表（同 `define_aggregate`）
+- `.constructors` - 构造函数列表，每个包含参数类型和实现 lambda
+- `.destructor` - 析构函数 lambda
+- `.methods` - 成员函数列表，包含名称、参数、返回类型和实现
+
+**关键机制：**
+
+1. **延迟实例化**：`to_device()` 方法引用 `Vector<T, Device::Gpu>` 类型时，
+   编译器不会立即实例化，而是记录依赖关系，在所有类型声明完成后再实例化。
+
+2. **类型前向声明**：编译器为每个 `Vector<T, Device>` 组合生成前向声明，
+   允许在方法定义中引用尚未完全实例化的类型。
+
+3. **循环依赖检测**：如果类型之间存在真正的循环定义（不通过指针/引用），
+   编译器报错。
+
 ## 多态对象的运行时类型查询
 
 反射查询默认要求类型静态已知。唯一的例外是通过基类指针/引用拿到的多态

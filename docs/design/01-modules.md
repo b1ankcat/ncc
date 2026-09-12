@@ -69,3 +69,102 @@ logger.info("custom logger instance");
 线程安全的（按 sink 做同步保护），多线程并发调用不会交叉写坏一行日志。
 默认的全局 `log_*` 函数写向一个默认 `Logger` 实例；需要自定义时用聚合
 初始化创建自己的 `Logger`，指向不同 sink（文件、`stderr`、自定义 `Writer`）。
+
+## comp class 的导出与实例化
+
+### 导出规则
+
+```cpp
+export module containers;
+
+// ✓ 导出 comp class（完整定义）
+export comp class CustomPtr<type T> {
+    T* ptr_;
+    
+    CustomPtr(T* p = nullptr) : ptr_(p) {}
+    ~CustomPtr() { if (ptr_) delete ptr_; }
+    
+    T& operator*() { return *ptr_; }
+    T* operator->() { return ptr_; }
+};
+
+// ✗ 不能只导出声明
+export comp class CustomPtr<type T>;  // 编译错误：comp class 必须包含完整定义
+```
+
+**完整定义必须可见的原因：**
+
+- `comp class` 是编译期代码生成机制
+- 编译器需要在使用处看到完整的类体才能实例化
+- 类似 C++ 模板，必须在模块导出中包含完整实现
+
+### 实例化模型
+
+```cpp
+// 模块 A：定义 comp class
+export module containers;
+
+export comp class CustomPtr<type T> {
+    T* ptr_;
+    // ... 完整实现
+};
+
+// 模块 B：使用 comp class
+import containers;
+import user;
+
+int main() {
+    // 编译器在此处实例化 CustomPtr<User>
+    CustomPtr<User> p(new User{1, "Alice"});
+}
+```
+
+**实例化流程：**
+
+1. **延迟实例化**：编译器在首次使用 `CustomPtr<User>` 时生成代码
+2. **符号去重**：链接器自动合并重复的实例化符号（使用 weak symbols）
+3. **增量缓存**：编译器缓存已实例化的类型，加速增量编译
+
+### .ncc.meta 元数据文件
+
+每个模块编译后生成 `.ncc.meta` 文件，包含：
+
+- `comp class` 的完整 AST
+- 导出符号的类型签名
+- 依赖的其他模块列表
+
+**示例：**
+
+```bash
+$ ccc build containers.ncc
+# 生成：
+#   containers.o       - 目标文件（不含 comp class 实例化代码）
+#   containers.ncc.meta - 元数据文件（包含完整 AST）
+```
+
+其他模块导入时，编译器从 `.ncc.meta` 读取完整定义并按需实例化。
+
+### 编译和链接流程
+
+```bash
+# 阶段 1：编译各模块（生成 .o 和 .ncc.meta）
+ccc build containers.ncc   # → containers.o + containers.ncc.meta
+ccc build user.ncc         # → user.o + user.ncc.meta
+ccc build main.ncc         # → main.o（包含实例化的 CustomPtr<User>）
+
+# 阶段 2：链接
+ccc link main.o containers.o user.o → main.exe
+# 链接器自动去重重复的 CustomPtr<User> 符号
+```
+
+**缓存优化：**
+
+```bash
+.ccc_cache/
+  ├── containers.CustomPtr_User.o      # CustomPtr<User> 的缓存
+  ├── containers.CustomPtr_Product.o   # CustomPtr<Product> 的缓存
+  └── ...
+```
+
+编译器为每个 `<comp_class, 类型参数>` 组合缓存生成的代码，
+如果定义未改变，直接使用缓存，加速增量编译。

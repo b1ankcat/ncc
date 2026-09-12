@@ -174,6 +174,175 @@ if (auto v = get_value()) {
 int32_t x = maybe.value_or(0);
 ```
 
+**Optional 不是错误处理机制**，而是表示"值可能不存在"的类型：
+
+```cpp
+// ✅ 使用 Optional：查找操作（找不到不是错误）
+Optional<User> find_user(uint64_t id);
+
+if (auto user = find_user(123)) {
+    println("Found: {}", user->name);
+} else {
+    println("User not found");  // 正常情况，不是错误
+}
+
+// ✅ 使用 Optional：可选配置
+struct Config {
+    String host;
+    Optional<uint16_t> port;  // 未设置时使用默认值
+};
+
+// ❌ 不要用 Optional 处理错误：
+// 文件打开失败应该抛出异常，而不是返回 Optional<File>
+```
+
+## 错误处理机制
+
+**NCC 使用 C++ 标准异常机制处理错误**，完全保留 `try`/`catch`/`throw` 语法。
+
+### 异常语法
+
+```cpp
+// 标准 C++ 异常语法
+try {
+    File f("/path/to/file");
+    String content = f.read_all();
+    Data data = parse(content);
+} catch (const IOException& e) {
+    println("IO error: {}", e.what());
+} catch (const ParseError& e) {
+    println("Parse error at position {}: {}", e.position(), e.what());
+} catch (const Exception& e) {
+    println("Error: {}", e.what());
+}
+
+// 抛出异常
+if (fd == -1) {
+    throw IOException(format("Failed to open file: {}", path));
+}
+```
+
+### 标准异常层次
+
+```cpp
+// 内置异常类型（对应 C++ 标准异常，去掉 std:: 前缀）
+class Exception {  // 基类
+public:
+    virtual String what() const = 0;
+    virtual ~Exception() = default;
+};
+
+class RuntimeError : public Exception {};
+class LogicError : public Exception {};
+
+// I/O 异常
+class IOException : public RuntimeError {};
+class FileNotFound : public IOException {};
+class PermissionDenied : public IOException {};
+class ConnectionRefused : public IOException {};
+
+// 解析异常
+class ParseError : public RuntimeError {
+    size_t position_;
+public:
+    ParseError(String msg, size_t pos);
+    size_t position() const { return position_; }
+};
+
+// 逻辑错误
+class InvalidArgument : public LogicError {};
+class OutOfRange : public LogicError {};
+class NullPointerError : public LogicError {};
+```
+
+### 何时使用异常 vs Optional
+
+**使用异常：**
+- 操作失败（文件打开失败、网络错误、解析失败）
+- 前置条件违反（数组越界、空指针解引用）
+- 资源耗尽（内存不足、文件描述符用尽）
+- 构造函数失败（构造函数无法返回错误码）
+
+**使用 Optional：**
+- 查找操作（找不到不是错误，是正常情况）
+- 可选配置（未设置时使用默认值）
+- 函数可能无返回值（正常的业务逻辑）
+
+```cpp
+// ✅ 异常：文件打开失败是错误
+File open_file(const String& path) {
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd == -1) {
+        throw IOException::from_errno(errno, path);
+    }
+    return File(fd);
+}
+
+// ✅ Optional：查找不到不是错误
+Optional<User> find_user(uint64_t id) {
+    if (auto it = users.find(id); it != users.end()) {
+        return it->second;
+    }
+    return {};
+}
+```
+
+### RAII 与异常安全
+
+NCC 完全依赖 RAII 实现异常安全，资源通过析构函数自动释放：
+
+```cpp
+void process_file(const String& path) {
+    File file(path);  // 构造时打开，析构时自动关闭
+    
+    // 如果下面的代码抛异常，file 自动析构（关闭文件）
+    String content = file.read_all();
+    Data data = parse(content);
+    save(data);
+    
+    // 无需手动关闭文件
+}
+
+// 智能指针自动管理内存
+void process() {
+    unique_ptr<Data> p(new Data());
+    
+    // 如果抛异常，p 自动析构（释放内存）
+    risky_operation();
+}
+```
+
+### 与 C 互操作
+
+包装 C 函数，将错误码转换为异常：
+
+```cpp
+// C 函数：int open(const char* path, int flags);
+// 返回 -1 表示失败，errno 包含错误码
+
+File open_file(const String& path) {
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd == -1) {
+        throw IoException::from_errno(errno, path);
+    }
+    return File(fd);
+}
+
+// 错误码到异常的映射
+class IoException : public Exception {
+public:
+    static IoException from_errno(int err, const String& path) {
+        String msg = format("{}: {}", path, strerror(err));
+        
+        switch (err) {
+            case ENOENT: throw FileNotFound(msg);
+            case EACCES: throw PermissionDenied(msg);
+            default: throw IoException(msg);
+        }
+    }
+};
+```
+
 ## Tagged Enum（携带数据的枚举）
 
 唯二语法例外之一，语法对应 Rust 的 `enum`：
@@ -183,23 +352,185 @@ enum Shape {
     Circle(double),              // 半径
     Rect(double, double),        // 宽、高
     Point,                       // 无数据
-}
+};
 
 // 构造：标准聚合初始化语法
 Shape s = Shape::Circle(5.0);
-s = Shape::Rect(2.0, 4.0);          // 重新赋值成另一个变体，同一个 `=`
+s = Shape::Rect(2.0, 4.0);
 
-// 取值：`cast<T>`/`is<T>` 同一套转换 API，把"变体名"当成一个具体类型看待
+// 取值：使用 match comp 函数
+double area = match(s) {
+    Circle(r) => 3.14 * r * r,
+    Rect(w, h) => w * h,
+    Point => 0.0,
+};
+
+// 或者使用 cast/is API
 if (auto c = cast<Shape::Circle>(s)) {
     println("radius = {}", c->radius);
 }
 if (is<Shape::Rect>(s)) {
     println("s is a Rect");
 }
+```
 
-// 数组：固定大小用内置 Array<T, N>，动态数组用内置 Vector<T>
-Array<int32_t, 10> fixed;   // 固定大小数组
-Vector<int32_t> dyn;        // 动态数组
+### Tagged Enum 的内存布局
+
+编译器生成的内存布局（用户不可见）：
+
+```cpp
+// enum Shape { Circle(double), Rect(double, double), Point };
+// 编译器生成：
+
+struct Shape {
+    enum class Tag : uint8_t {
+        Circle = 0,
+        Rect = 1,
+        Point = 2,
+    };
+    
+    Tag tag;
+    alignas(8) union {
+        struct { double radius; } circle;
+        struct { double width; double height; } rect;
+        struct {} point;  // 空
+    } data;
+    
+    // 编译器自动生成构造/析构/赋值
+};
+
+// 内存布局：
+// sizeof(Shape) = 24 字节
+//   [0]     tag (uint8_t)
+//   [1-7]   padding
+//   [8-23]  union data (16 字节，最大变体的大小)
+```
+
+### Tagged Enum 的生命周期
+
+```cpp
+Shape s = Shape::Circle(5.0);
+s = Shape::Rect(2.0, 4.0);  // 重新赋值
+
+// 编译器生成的赋值运算符：
+// 1. 调用当前变体（Circle）的析构函数
+// 2. 复制构造新变体（Rect）
+Shape& Shape::operator=(const Shape& other) {
+    if (this != &other) {
+        destroy_current_variant();  // 析构旧变体
+        
+        tag = other.tag;
+        switch (tag) {
+            case Tag::Circle:
+                new (&data.circle) Circle(other.data.circle);
+                break;
+            case Tag::Rect:
+                new (&data.rect) Rect(other.data.rect);
+                break;
+            case Tag::Point:
+                new (&data.point) Point(other.data.point);
+                break;
+        }
+    }
+    return *this;
+}
+```
+
+### match comp 函数（穷尽性检查）
+
+`match` 是 `comp` 函数，提供穷尽性检查：
+
+```cpp
+// match 是表达式，可以返回值
+double area = match(s) {
+    Circle(r) => 3.14 * r * r,
+    Rect(w, h) => w * h,
+    Point => 0.0,
+};
+
+// match 也可以是语句（不返回值）
+match(s) {
+    Circle(r) => println("Circle: radius {}", r),
+    Rect(w, h) => println("Rect: {}x{}", w, h),
+    Point => println("Point"),
+};
+
+// 编译期穷尽性检查
+double bad = match(s) {
+    Circle(r) => 3.14 * r * r,
+    Rect(w, h) => w * h,
+    // 缺少 Point 变体
+};
+// 编译错误：
+// error: non-exhaustive pattern match
+// note: missing variant: Shape::Point
+
+// 使用通配符 _ 捕获剩余变体
+double approx = match(s) {
+    Circle(r) => 3.14 * r * r,
+    _ => 0.0,  // 匹配 Rect 和 Point
+};
+```
+
+### 泛型 Tagged Enum
+
+```cpp
+// 泛型枚举示例
+enum Option<type T> {
+    Some(T),
+    None,
+};
+
+// 使用
+Option<int32_t> maybe = Option::Some(42);
+
+match(maybe) {
+    Some(value) => println("Value: {}", value),
+    None => println("No value"),
+};
+```
+
+### 嵌套 Tagged Enum
+
+```cpp
+enum Expr {
+    Lit(int32_t),
+    Add(Expr*, Expr*),  // 递归
+    Mul(Expr*, Expr*),
+};
+
+// 递归访问
+int32_t eval(Expr* e) {
+    return match(*e) {
+        Lit(n) => n,
+        Add(left, right) => eval(left) + eval(right),
+        Mul(left, right) => eval(left) * eval(right),
+    };
+}
+```
+
+### 与 comp 系统集成
+
+```cpp
+// 编译期反射 tagged enum
+comp {
+    auto T = ^^Shape;
+    
+    // 查询所有变体
+    for (auto variant : variants_of(T)) {
+        println("Variant: {}", name_of(variant));
+        
+        // 查询变体的字段
+        for (auto field : fields_of(variant)) {
+            println("  {}: {}", name_of(field), name_of(type_of(field)));
+        }
+    }
+}
+```
+
+## 数组与容器
+
+```cpp
 
 // 指针（无检查，完全由程序员控制）：标准后缀写法
 Point* p;

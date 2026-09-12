@@ -1,22 +1,22 @@
-﻿# 八、并发与多线程
+# 八、并发与多线程
 
 NCC 的并发模型基于两个核心范式：
-1. **数据并行**：统一的 `parallel`/`reduce` API，通过执行策略选择 CPU 或 GPU
+1. **数据并行**：统一的 `parallel`/`reduce` API，通过 `Device` 参数选择 CPU 或 GPU
 2. **任务并发**：Go 风格的轻量级任务（`Thread::spawn` + `Channel`）
 
 无需新增关键字，全部通过 `comp` 函数和库实现。
 
 ## 核心理念
 
-- **统一的并行 API**：`parallel` 和 `reduce` 接受执行策略，CPU/GPU 是实现后端
+- **统一的并行 API**：`parallel` 和 `reduce` 接受 `Device` 参数，CPU/GPU 是实现后端
 - **轻量级任务**：Go 风格的 goroutine（Thread::spawn，2KB 栈，M:N 调度）
 - **通道通信**：Go 风格的 Channel，优先消息传递而非共享内存
-- **零成本抽象**：只为实际选择的执行策略生成所需代码；任务调度本身是运行时库能力
+- **零成本抽象**：只为实际选择的执行策略生成所需代码
 - **无新增关键字**：所有特性通过库和 `comp` 函数实现
 
-## 一、数据并行（OpenMP/OpenACC 统一）
+## 一、数据并行
 
-### `parallel` - 数据并行
+### CPU 数据并行
 
 ```cpp
 import parallel;
@@ -24,137 +24,57 @@ import parallel;
 Vector<int32_t> data(1000000);
 
 // CPU 数据并行
-parallel(data.size(), [&](size_t i) {
+parallel<Device::Cpu>(data.size(), [&](size_t i) {
     data[i] = compute(i);
-}, Execution::Cpu);
+});
 
-// 具体调度由运行时库执行；Execution::Cpu 只是策略选择
-```
-
-### `parallel` - GPU 后端
-
-```cpp
-import parallel;
-
-Vector<float> data(1000000);
-
-// GPU 数据并行
-parallel(data.size(), [&](size_t i) {
-    data[i] = data[i] * 2.0f + 1.0f;
-}, Execution::Gpu);
-
-// 后端代码生成与运行时设备支持待确认
+// parallel 是 comp 函数，签名：
+// comp void parallel<Device device>(size_t n, auto func, Schedule schedule = Schedule::Auto);
 ```
 
 ### 统一的 API 设计
 
 ```cpp
 // 一维并行
-parallel(n, [&](size_t i) { /* ... */ }, Execution::Cpu);
-parallel(n, [&](size_t i) { /* ... */ }, Execution::Gpu);
+parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ });
 
 // 二维并行
-parallel(rows, cols, [&](size_t i, size_t j) { /* ... */ }, Execution::Cpu);
-parallel(rows, cols, [&](size_t i, size_t j) { /* ... */ }, Execution::Gpu);
+parallel<Device::Cpu>(rows, cols, [&](size_t i, size_t j) { /* ... */ });
 
 // 三维并行
-parallel(x, y, z, [&](size_t i, size_t j, size_t k) { /* ... */ }, Execution::Cpu);
-parallel(x, y, z, [&](size_t i, size_t j, size_t k) { /* ... */ }, Execution::Gpu);
+parallel<Device::Cpu>(x, y, z, [&](size_t i, size_t j, size_t k) { /* ... */ });
 ```
 
 ### 并行归约
 
 ```cpp
 // CPU 归约
-int32_t sum = reduce(data, 0, [](int32_t a, int32_t b) {
+int32_t sum = reduce<Device::Cpu>(data, 0, [](int32_t a, int32_t b) {
     return a + b;
-}, Execution::Cpu);
+});
 
-// GPU 归约
-float total = reduce(data, 0.0f, [](float a, float b) {
-    return a + b;
-}, Execution::Gpu);
+// 求最大值
+float max_val = reduce<Device::Cpu>(data, -INFINITY, [](float a, float b) {
+    return a > b ? a : b;
+});
 ```
 
 ### 调度策略（CPU）
 
 ```cpp
 // 静态调度：编译期分配固定范围
-parallel(n, [&](size_t i) { /* ... */ }, Execution::Cpu, Schedule::Static);
+parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::Static);
 
 // 动态调度：运行时动态分配任务
-parallel(n, [&](size_t i) { /* ... */ }, Execution::Cpu, Schedule::Dynamic(chunk_size=100));
+parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::Dynamic(chunk_size=100));
 
 // 工作窃取：负载均衡
-parallel(n, [&](size_t i) { /* ... */ }, Execution::Cpu, Schedule::WorkStealing);
+parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::WorkStealing);
 ```
 
-### GPU 内存管理
+### GPU 数据并行
 
-```cpp
-import gpu;
-
-// 主机内存
-Vector<float> host(1000000);
-
-// 分配 GPU 内存
-GpuBuffer<float> device = gpu_alloc(host.size());
-
-// 主机 → GPU
-device.copy_from(host);
-
-// GPU 计算
-parallel(device.size(), [device](size_t i) {
-    device[i] = device[i] * 2.0f;
-}, Execution::Gpu);
-
-// GPU → 主机
-device.copy_to(host);
-```
-
-### 统一内存（自动迁移）
-
-```cpp
-// 统一内存：CPU/GPU 自动迁移
-UnifiedBuffer<float> data(1000000);
-
-// CPU 初始化
-for (size_t i = 0; i < data.size(); ++i) {
-    data[i] = i;
-}
-
-// GPU 计算（自动迁移到 GPU）
-parallel(data.size(), [data](size_t i) {
-    data[i] = data[i] * 2.0f;
-}, Execution::Gpu);
-
-// CPU 读取（自动迁移回 CPU）
-println("Result: {}", data[0]);
-```
-
-### 矩阵乘法示例
-
-```cpp
-void matmul_cpu(Matrix& c, const Matrix& a, const Matrix& b) {
-    parallel(c.rows(), c.cols(), [&](size_t i, size_t j) {
-        float sum = 0.0f;
-        for (size_t k = 0; k < a.cols(); ++k) {
-            sum += a(i, k) * b(k, j);
-        }
-        c(i, j) = sum;
-    }, Execution::Cpu);
-}
-
-void matmul_gpu(Matrix& c, const Matrix& a, const Matrix& b) {
-    parallel(c.rows(), c.cols(), [&](size_t i, size_t j) {
-        float sum = 0.0f;
-        for (size_t k = 0; k < a.cols(); ++k) {
-            sum += a(i, k) * b(k, j);
-        }
-        c(i, j) = sum;
-    }, Execution::Gpu);
-}
-```
+GPU 相关的并行计算请参考 [09-gpu.md](09-gpu.md)。
 
 ## 二、任务并发（Go 风格）
 
@@ -374,77 +294,13 @@ struct Cache {
 };
 ```
 
-## 四、实现原理
-
-### parallel 的实现边界（待确认）
-
-```cpp
-// parallel 是普通运行时库函数；comp 只可用于静态策略选择或生成专用内核。
-// 线程数、分块和 join 都依赖运行时硬件与输入，不能放进 comp 求值。
-void parallel(size_t n, auto func, Execution execution,
-              Schedule schedule = Schedule::Auto);
-```
-
-### GPU 后端（待确认）
-
-```cpp
-// GPU 后端可以由编译器在 comp 上下文中选择，也可以由运行时库调度。
-// 具体 CUDA/OpenCL/Metal 接口尚未定稿，这里不规定新的语言语法。
-```
-
-### Thread::spawn 运行时
-
-```cpp
-// 运行时系统（库实现，非语言特性）
-struct Runtime {
-    Vector<OSThread> os_threads;        // OS 线程池
-    LockFreeQueue<Task*> global_queue;  // 全局任务队列
-    Vector<LockFreeQueue<Task*>> local_queues;  // 每线程本地队列
-    
-    void worker(size_t tid) {
-        while (running) {
-            // 1. 尝试从本地队列取任务
-            Optional<Task*> task = local_queues[tid].pop();
-            
-            if (!task) {
-                // 2. 尝试从全局队列取任务
-                task = global_queue.pop();
-            }
-            
-            if (!task) {
-                // 3. 工作窃取：从其他线程偷任务
-                for (size_t i = 0; i < local_queues.size(); ++i) {
-                    if (i != tid) {
-                        task = local_queues[i].steal();
-                        if (task) break;
-                    }
-                }
-            }
-            
-            if (task) {
-                task.value()->execute();
-            } else {
-                // 无任务，休眠
-                Thread::sleep(1ms);
-            }
-        }
-    }
-};
-```
-
-## 五、使用场景
+## 四、使用场景
 
 ### 场景 1：数据并行（图像处理）
 
 ```cpp
 void apply_filter(Image& img) {
-    // CPU 版本
-    parallel(img.height(), img.width(), [&](size_t y, size_t x) {
-        img(y, x) = blur(img, y, x);
-    });
-    
-    // GPU 版本（API 完全相同）
-    parallel(img.height(), img.width(), [&](size_t y, size_t x) {
+    parallel<Device::Cpu>(img.height(), img.width(), [&](size_t y, size_t x) {
         img(y, x) = blur(img, y, x);
     });
 }
@@ -507,23 +363,18 @@ void pipeline() {
 }
 ```
 
-### 场景 4：混合使用
+### 场景 4：混合使用（CPU 并行 + 任务并发）
 
 ```cpp
 void hybrid_computation() {
     Vector<Image> images = load_images();
     
     // 1. CPU 并行预处理
-    parallel(images.size(), [&](size_t i) {
+    parallel<Device::Cpu>(images.size(), [&](size_t i) {
         images[i] = preprocess(images[i]);
     });
     
-    // 2. GPU 并行计算
-    parallel(images.size(), [&](size_t i) {
-        images[i] = compute_intensive(images[i]);
-    });
-    
-    // 3. 任务并发上传结果
+    // 2. 任务并发上传结果
     Channel<Result> results(100);
     
     for (auto& img : images) {
@@ -540,7 +391,7 @@ void hybrid_computation() {
 }
 ```
 
-## 六、性能优化
+## 五、性能优化
 
 ### 任务粒度
 
@@ -551,45 +402,32 @@ for (size_t i = 0; i < 1000000; ++i) {
 }
 
 // ✓ 好：使用数据并行
-parallel(1000000, [](size_t i) {
+parallel<Device::Cpu>(1000000, [](size_t i) {
     compute(i);  // 自动分块
 });
-```
-
-### CPU vs GPU 选择
-
-```cpp
-// 数据量小：CPU
-if (data.size() < 10000) {
-    parallel(data.size(), [&](size_t i) { process(data[i]); });
-}
-// 数据量大：GPU
-else {
-    parallel(data.size(), [&](size_t i) { process(data[i]); });
-}
 ```
 
 ### 内存访问模式
 
 ```cpp
 // ✓ 好：连续访问（CPU 缓存友好）
-parallel(n, [&](size_t i) {
+parallel<Device::Cpu>(n, [&](size_t i) {
     result[i] = data[i] * 2;  // 连续内存访问
 });
 
 // ✗ 差：随机访问（缓存不友好）
-parallel(n, [&](size_t i) {
+parallel<Device::Cpu>(n, [&](size_t i) {
     result[i] = data[random_index[i]];  // 随机跳跃
 });
 ```
 
-## 七、最佳实践
+## 六、最佳实践
 
-### 1. 数据并行用 cpu/parallel
+### 1. 数据并行用 parallel
 
 ```cpp
 // ✓ 好
-parallel(data.size(), [&](size_t i) { /* ... */ });
+parallel<Device::Cpu>(data.size(), [&](size_t i) { /* ... */ });
 
 // ✗ 差：手动创建线程
 for (size_t i = 0; i < num_threads; ++i) {
@@ -620,24 +458,23 @@ Channel<int32_t> ch;
 Mutex<int32_t> counter;
 ```
 
-## 八、对比总结
+## 七、对比总结
 
 | 场景 | 解决方案 | API |
 |------|---------|-----|
-| CPU 数据并行 | OpenMP 风格 | `parallel(..., Execution::Cpu)` |
-| GPU 数据并行 | OpenACC 风格 | `parallel(..., Execution::Gpu)` |
+| CPU 数据并行 | OpenMP 风格 | `parallel<Device::Cpu>` |
+| GPU 数据并行 | 参见 GPU 文档 | `parallel<Device::Gpu>` |
 | 任务并发 | Go 风格 | `Thread::spawn` + `Channel` |
 | 同步原语 | 标准 C++ | `Mutex`、`Atomic`、`RwLock` |
 
 **核心优势**：
-- ✅ 统一的 CPU/GPU API（`parallel` + `Execution` 策略）
+- ✅ 统一的 CPU/GPU API（`parallel` + `Device` 参数）
 - ✅ 轻量级任务系统（Go 风格）
 - ✅ 无新增关键字（全部库 + comp 函数）
 - ✅ 零成本抽象（只为选定策略生成所需代码）
 
 ## 下一步
 
-- 查看 [09-compiler.md](09-compiler.md) 了解 `comp` 函数的编译器实现
-- 查看 [10-packages.md](10-packages.md) 了解并发库的依赖管理
+- 查看 [09-gpu.md](09-gpu.md) 了解 GPU 并行与异构计算
+- 查看 [10-compiler.md](10-compiler.md) 了解编译器架构
 - 查看 [12-examples.md](12-examples.md) 查看完整的并发示例
-
