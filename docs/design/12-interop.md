@@ -323,6 +323,10 @@ ccc build --generate-c-header
 
 **生成的头文件：**
 
+下面是**生成给 C 编译器读的产物，不是 NCC 源代码**。NCC 本身没有预处理器，
+但输出的 C 头文件必须包含 include guard 和 `extern "C"` 包装，才能被 C 与 C++
+编译器正确处理：
+
 ```c
 // mylib.h - 自动生成，不要手动编辑
 #ifndef MYLIB_H
@@ -443,7 +447,7 @@ struct User {
 
 // ❌ 不兼容：NCC 核心类型
 struct Data {
-    String text;       // sizeof(String) = 24 (COW + SSO)
+    String text;       // sizeof(String) = 24 (SSO)
     Vector<int> nums;  // sizeof(Vector) = 24
 };
 // 不能直接传递给 C，需要通过 C API 包装

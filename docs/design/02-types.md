@@ -51,24 +51,36 @@ char32_t   // Unicode code point
 
 ### String 类型
 
-核心库内置的 `String` 类型设计目标：**UTF-8、零拷贝视图、写时复制、高性能**。
+核心库内置的 `String` 类型设计目标：**UTF-8、小字符串免分配、零拷贝视图、高性能**。
 
-```cpp
-// String 内部表示（简化说明）
-struct String {
-    char* data;        // UTF-8 编码数据
-    size_t len;        // 字节长度（不是字符数）
-    size_t capacity;   // 分配容量
-    size_t* refcount;  // 引用计数（用于写时复制）
-};
+`sizeof(String) == 24`，同一块存储有两种形态，靠最高位的判别位区分：
+
+```
+长形式（堆存储）：
+  [0-7]   char* data          指向堆缓冲区
+  [8-15]  size_t size         字节长度（不含终止符）
+  [16-23] size_t capacity     容量；最高位为判别位 = 1
+
+短形式（内联存储）：
+  [0-22]  char buf[23]        UTF-8 数据 + NUL 终止符
+  [23]    uint8_t control     低 7 位存长度；最高位为判别位 = 0
 ```
 
 **核心特性**：
 
 1. **默认 UTF-8**：所有字符串字面量、`String` 内部存储都是 UTF-8
-2. **写时复制（COW）**：赋值/传参只复制指针，修改时才真正复制数据
-3. **小字符串优化（SSO）**：短字符串（≤23 字节）内联存储，无堆分配
-4. **零拷贝视图**：`StringView` 不拥有数据，只是 `(const char*, len)` 指针对
+2. **小字符串优化（SSO）**：**≤22 字节**内联存储，无堆分配
+3. **始终 NUL 终止**：`c_str()` 因此是零拷贝的；容量计算为终止符多留一字节
+4. **零拷贝视图**：`StringView` 不拥有数据，只是 `(const char*, size)` 指针对
+
+SSO 容量是 22 而非 23：短形式的 23 字节缓冲区里必须留一个字节给 NUL 终止符。
+
+**不采用写时复制（COW）**。COW 要求引用计数在多线程下原子化，使单线程用户也要为
+跨线程共享的可能性付原子操作的代价，与"不为不用的功能付出代价"相悖；C++11 正是
+因此禁止了 `std::basic_string` 的 COW。它还会与本文档的另外两条承诺冲突：
+`operator[]` 不做检查（COW 下每个可写访问都要检查是否需要去共享）、`c_str()`
+零拷贝（把指针交给 C 代码后共享状态失控）。避免拷贝请使用 `StringView` 或 `move()`
+——显式且零开销，而非隐式地"也许省一次拷贝"。
 
 **使用示例**：
 
@@ -127,10 +139,26 @@ Vector<wchar_t> wide = s.to_wide();  // Windows 上可用（核心库提供）
 
 ### 性能保证
 
-- **小字符串（≤23 字节）**：零堆分配
-- **中等字符串**：写时复制，赋值 O(1)
+- **小字符串（≤22 字节）**：零堆分配，拷贝为 24 字节的按位复制
+- **长字符串**：拷贝为 O(n)，分配新缓冲区；避免拷贝用 `StringView` 或 `move()`
+- **移动**：O(1)，接管缓冲区并将源置为空的短形式
 - **拼接**：`reserve()` 预分配避免多次重分配
 - **视图**：`StringView` 零拷贝，适合传参
+
+### `StringView`
+
+```cpp
+class StringView {
+public:
+    const char* data() const;   // 不保证 NUL 终止
+    size_t size() const;
+    // 没有 c_str()
+};
+```
+
+`StringView` **不提供 `c_str()`**：它可能指向某个 `String` 的中间位置，该位置之后
+没有终止符。需要传给 C API 时先构造 `String`。视图不拥有数据，来源 `String` 销毁
+或重分配后即失效。
 
 ### 安全性
 
@@ -143,9 +171,8 @@ Vector<wchar_t> wide = s.to_wide();  // Windows 上可用（核心库提供）
 NCC 当前仅支持 64 位目标；32 位目标不在语言、ABI 和核心库支持范围内。
 
 String 默认严格拒绝非法 UTF-8；显式替换模式使用 U+FFFD。StringView 不拥有
-数据，来源 String 销毁或重分配后失效。COW 写入必须先取得唯一可写存储，裸指针
-不能绕过该规则。低精度类型的宽度、对齐、舍入和累加精度由类型定义；不支持的
-硬件使用软件 fallback 或在编译期拒绝。
+数据，来源 String 销毁或重分配后失效。低精度类型的宽度、对齐、舍入和累加精度
+由类型定义；不支持的硬件使用软件 fallback 或在编译期拒绝。
 
 ```cpp
 // 固定大小数组：内置 Array<T, N>（栈分配）
@@ -223,6 +250,37 @@ struct Config {
 // ❌ 不要用 Optional 处理错误：
 // 文件打开失败应该抛出异常，而不是返回 Optional<File>
 ```
+
+## 断言：`assert` 是 `comp` 函数
+
+预处理器整体删除（见[概览](00-overview.md)），因此 `assert` 不是宏，而是核心库的
+`comp` 函数。它靠编译期参数取得表达式文本与源码位置：
+
+```cpp
+comp void assert(bool condition,
+                 String expression = expression_of(condition),
+                 SourceLocation location = SourceLocation::current());
+```
+
+```cpp
+void withdraw(Account& account, int64_t amount) {
+    assert(amount > 0);
+    assert(account.balance >= amount);
+    // ...
+}
+
+// 失败时的诊断包含表达式文本、位置与子表达式的值：
+// assertion failed: account.balance >= amount
+//   at bank.ncc:12:5
+//   account.balance = 50
+//   amount = 120
+```
+
+报告子表达式的值是 `comp` 版本相对宏的实际优势——C 的 `assert` 只能打印表达式
+文本。断言是否生成由独立的 `assertions` 构建配置项控制，**与优化级别解耦**：
+release 构建默认关闭断言，但可以显式开启，不必为了保留断言而放弃优化。
+
+`static_assert` 是关键字而非宏，保留不变，用于编译期条件检查。
 
 ## 错误处理机制
 

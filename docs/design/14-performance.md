@@ -269,20 +269,21 @@ ccc perf report
 ### String 性能
 
 ```cpp
-// COW (Copy-On-Write) - 避免不必要的拷贝
-String s1 = "Hello, World!";
-String s2 = s1;  // 零拷贝，共享数据
-s2 += "!";       // 此时才拷贝
+// SSO：≤22 字节内联存储，无堆分配，拷贝是 24 字节按位复制
+String short_str = "abc";
 
-// SSO (Small String Optimization) - 短字符串无堆分配
-String short_str = "abc";  // 内联存储，sizeof = 24 字节
+// 长字符串拷贝为 O(n)：分配 + 复制，没有隐式共享
+String s1 = "a fairly long string that exceeds the inline buffer";
+String s2 = s1;             // O(n) 深拷贝
 
-// 性能特征
-sizeof(String) = 24 字节
-  - 8 字节：指针或内联数据开始
-  - 8 字节：长度
-  - 8 字节：容量/引用计数
+// 避免拷贝的两种显式方式
+StringView view = s1;       // 零拷贝，不拥有
+String s3 = move(s1);       // O(1)，接管缓冲区
 ```
+
+`sizeof(String) == 24`，两种形态共用这 24 字节（布局见
+[字符串设计](02-types.md#string-类型)）。不采用 COW，因此没有原子引用计数的开销，
+也没有"某次写入意外触发深拷贝"这类难以预测的性能悬崖。
 
 ### Vector 性能
 
@@ -404,22 +405,24 @@ StringView process(const String& text) {
 ### 3. 循环优化
 
 ```cpp
-// ✗ 差：未向量化
+// 朴素循环：是否向量化取决于后端能否证明无别名
 for (size_t i = 0; i < n; ++i) {
     result[i] = a[i] + b[i];
 }
 
-// ✓ 好：提示编译器可向量化
-#pragma clang loop vectorize(enable)
-for (size_t i = 0; i < n; ++i) {
+// ✓ 显式提示：attribute 可忽略，删掉它程序语义不变
+[[ncc::vectorize]] for (size_t i = 0; i < n; ++i) {
     result[i] = a[i] + b[i];
 }
 
-// ✓ 更好：使用 parallel（自动向量化）
+// ✓ 更好：使用 parallel，兼得分块与向量化
 parallel<Device::Cpu>(n, [&](size_t i) {
     result[i] = a[i] + b[i];
 });
 ```
+
+没有 `#pragma`：预处理器已整体删除，向量化提示改用
+[attribute](00-overview.md)，并遵循"attribute 必须可忽略"的判据。
 
 ### 4. 内存对齐
 
