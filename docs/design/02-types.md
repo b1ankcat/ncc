@@ -116,7 +116,7 @@ String from_c = String::from_c_str(c_str);
 
 // 平台字符串（使用 comp 条件编译）
 comp {
-    if (target_os == "windows") {
+    if (target_os() == "windows") {
         // Windows UTF-16 转换在编译期决定是否包含
     }
 }
@@ -166,20 +166,41 @@ String s = "Hello";  // 内部是 UTF-8 字节序列
 内置的 `Optional<T>`（语义等价 `std::optional`，去掉 `std::` 前缀）：
 
 ```cpp
+comp class Optional<type T> {
+public:
+    bool has_value() const;
+    explicit operator bool() const;   // 用于 if / while 条件
+
+    T& value();                       // 空值时抛出 LogicError
+    const T& value() const;
+    T value_or(T fallback) const;
+
+    T& operator*();                   // 前置条件：has_value()，不检查
+    const T& operator*() const;
+    T* operator->();
+    const T* operator->() const;
+};
+```
+
+```cpp
 Optional<int32_t> maybe = get_value();
 
 if (maybe.has_value()) {
     println("{}", maybe.value());
 }
 
-// 配合 if 初始化语句
+// 配合 if 初始化语句：explicit operator bool 在条件中生效
 if (auto v = get_value()) {
-    println("{}", v.value());
+    println("{}", *v);
 }
 
 // 提供默认值
 int32_t x = maybe.value_or(0);
 ```
+
+`value()` 检查并在空值时抛出 `LogicError`；`operator*` 和 `operator->` 不检查，
+要求调用方已确认 `has_value()`。`Optional<reference_wrapper<T>>`（`cast<T&>` 的
+返回类型）用 `->` 取得 `reference_wrapper`，再用 `.get()` 取得被引用对象。
 
 **Optional 不是错误处理机制**，而是表示"值可能不存在"的类型：
 
@@ -234,33 +255,53 @@ if (fd == -1) {
 ```cpp
 // 内置异常类型（对应 C++ 标准异常，去掉 std:: 前缀）
 class Exception {  // 基类
+    String message_;
 public:
-    virtual String what() const = 0;
+    explicit Exception(String message);
+    virtual String what() const;   // 默认返回构造时的 message_
     virtual ~Exception() = default;
 };
 
-class RuntimeError : public Exception {};
-class LogicError : public Exception {};
+class RuntimeError : public Exception {
+public:
+    using Exception::Exception;     // 继承 (String) 构造函数
+};
+
+class LogicError : public Exception {
+public:
+    using Exception::Exception;
+};
 
 // I/O 异常
-class IOException : public RuntimeError {};
-class FileNotFound : public IOException {};
-class PermissionDenied : public IOException {};
-class ConnectionRefused : public IOException {};
+class IOException : public RuntimeError { public: using RuntimeError::RuntimeError; };
+class FileNotFound : public IOException { public: using IOException::IOException; };
+class PermissionDenied : public IOException { public: using IOException::IOException; };
+class ConnectionRefused : public IOException { public: using IOException::IOException; };
+class NetworkException : public IOException { public: using IOException::IOException; };
 
 // 解析异常
 class ParseError : public RuntimeError {
     size_t position_;
 public:
-    ParseError(String msg, size_t pos);
+    ParseError(String message, size_t position);
     size_t position() const { return position_; }
 };
 
+// 并发与设备异常
+class ChannelClosed : public RuntimeError { public: using RuntimeError::RuntimeError; };
+class GpuUnavailable : public RuntimeError { public: using RuntimeError::RuntimeError; };
+
 // 逻辑错误
-class InvalidArgument : public LogicError {};
-class OutOfRange : public LogicError {};
-class NullPointerError : public LogicError {};
+class InvalidArgument : public LogicError { public: using LogicError::LogicError; };
+class OutOfRange : public LogicError { public: using LogicError::LogicError; };
+class NullPointerError : public LogicError { public: using LogicError::LogicError; };
 ```
+
+`Exception` 提供接受 `String` 的构造函数并实现 `what()`，派生类通过
+`using Base::Base` 继承该构造函数，因此空的派生类体也是可用的具体类型；
+`what()` 是虚函数，需要拼接额外上下文的类型（如 `ParseError`）可以覆盖它。
+核心库不定义其他异常基类；用户自定义异常应从 `RuntimeError` 或 `LogicError`
+派生，以便统一被 `catch (const Exception&)` 捕获。
 
 ### 何时使用异常 vs Optional
 
@@ -280,7 +321,7 @@ class NullPointerError : public LogicError {};
 File open_file(const String& path) {
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd == -1) {
-        throw IOException::from_errno(errno, path);
+        throw_errno(errno, path);
     }
     return File(fd);
 }
@@ -330,25 +371,26 @@ void process() {
 File open_file(const String& path) {
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd == -1) {
-        throw IoException::from_errno(errno, path);
+        throw_errno(errno, path);   // 不返回
     }
     return File(fd);
 }
 
-// 错误码到异常的映射
-class IoException : public Exception {
-public:
-    static IoException from_errno(int err, const String& path) {
-        String msg = format("{}: {}", path, strerror(err));
-        
-        switch (err) {
-            case ENOENT: throw FileNotFound(msg);
-            case EACCES: throw PermissionDenied(msg);
-            default: throw IoException(msg);
-        }
+// 错误码到异常的映射：核心库提供的辅助函数
+[[noreturn]] void throw_errno(int err, const String& path) {
+    String message = format("{}: {}", path, strerror(err));
+
+    switch (err) {
+        case ENOENT: throw FileNotFound(message);
+        case EACCES: throw PermissionDenied(message);
+        case ECONNREFUSED: throw ConnectionRefused(message);
+        default: throw IOException(message);
     }
-};
+}
 ```
+
+映射写成 `[[noreturn]]` 的自由函数，而不是返回异常对象的静态成员：具体抛出的
+类型由 errno 决定，按值返回基类会丢失派生类型。
 
 ## Tagged Enum（携带数据的枚举）
 
@@ -381,7 +423,7 @@ double area = match(
 
 // 或者使用 cast/is API
 if (auto c = cast<Shape::Circle&>(s)) {
-    const auto& [radius] = c.get();
+    const auto& [radius] = c->get();
     println("radius = {}", radius);
 }
 if (is<Shape::Rect>(s)) {

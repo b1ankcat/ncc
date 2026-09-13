@@ -6,8 +6,8 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 
 - **新手入门**: 从 [00-overview.md](00-overview.md) 开始
 - **核心特性**: 阅读 [05-comp.md](05-comp.md) 了解 `comp` 系统
-- **实战示例**: 查看 [12-examples.md](12-examples.md)
-- **语言对比**: 参考 [13-comparison.md](13-comparison.md)
+- **实战示例**: 查看 [15-examples.md](15-examples.md)
+- **语言对比**: 参考 [16-comparison.md](16-comparison.md)
 
 ## 文档结构
 
@@ -66,20 +66,14 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - 结构化任务作用域、显式 join/取消和通道关闭
   - GPU 捕获的设备可传输性检查
   - 通道与 Select
-  - 结构化并发
-  - GPU 并行与异构计算
   - 并发原语与任务调度（不增加额外借用或数据竞争检查）
-
-### 工具链
 
 - **[09-gpu.md](09-gpu.md)** - GPU 与异构计算
   - DeviceView 与设备可传输性
+  - GPU 捕获的设备可传输性检查
   - CUDA/ROCm/OneAPI 目标
 
-- **[11-compiler.md](11-compiler.md)** - 编译器架构
-  - MLIR/LLVM 后端
-  - 增量编译与并行编译
-  - 错误报告
+### 工具链
 
 - **[10-packages.md](10-packages.md)** - 包管理系统
   - package.toml 配置
@@ -97,24 +91,29 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[12-interop.md](12-interop.md)** - C 互操作
   - 显式 `extern "C"` ABI、目标 ABI 类型映射与回调
 
+- **[13-compiler.md](13-compiler.md)** - 编译器架构
+  - MLIR/LLVM 后端
+  - 增量编译与并行编译
+  - 错误报告
+
+- **[14-performance.md](14-performance.md)** - 性能基准与优化
+  - 可重复 benchmark 目标
+  - CPU/GPU 优化与回归检测
+
 ### 参考资料
 
-- **[12-examples.md](12-examples.md)** - 完整示例
+- **[15-examples.md](15-examples.md)** - 完整示例
   - 数据结构与反射
   - HTTP 服务器
   - 测试框架
   - 多态与反射结合
   - AI/ML 低精度计算
 
-- **[13-comparison.md](13-comparison.md)** - 语言对比
+- **[16-comparison.md](16-comparison.md)** - 语言对比
   - vs C++：改进与保留
   - vs Rust：内存安全取舍
   - vs Zig：语法基线差异
   - 代码示例对比
-
-- **[13-performance.md](13-performance.md)** - 性能基准与优化
-  - 可重复 benchmark 目标
-  - CPU/GPU 优化与回归检测
 
 ## 核心特性速查
 
@@ -214,13 +213,13 @@ ccc run
 - 掌握 03-memory.md 内存管理
 
 ### 3. 实战（1 周）
-- 阅读 12-examples.md 完整示例
+- 阅读 15-examples.md 完整示例
 - 学习 10-packages.md 包管理
 - 实现一个小项目
 
 ### 4. 高级（持续）
-- 研究 11-compiler.md 编译器架构
-- 对比 13-comparison.md 与其他语言
+- 研究 13-compiler.md 编译器架构
+- 对比 16-comparison.md 与其他语言
 - 参与社区贡献
 
 ## 常见问题

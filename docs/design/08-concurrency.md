@@ -66,8 +66,8 @@ float max_val = reduce<Device::Cpu>(data, -INFINITY, [](float a, float b) {
 // 静态调度：编译期分配固定范围
 parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::Static);
 
-// 动态调度：运行时动态分配任务
-parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::Dynamic(chunk_size=100));
+// 动态调度：运行时动态分配任务（参数为 chunk 大小）
+parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::Dynamic(100));
 
 // 工作窃取：负载均衡
 parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::WorkStealing);
@@ -319,7 +319,7 @@ bool success = counter.compare_exchange_strong(expected, 20);
 
 ```cpp
 struct Cache {
-    RwLock<Map<String, String>> data;
+    RwLock<HashMap<String, String>> data;
     
     Optional<String> get(const String& key) {
         auto guard = data.read_lock();  // 共享读锁
@@ -507,15 +507,38 @@ TaskScope scope;
 scope.spawn([&]{ /* 写 result */ });
 ```
 
-### 3. 优先通道，避免锁
+### 3. 按场景选择通信方式
+
+三种机制各有适用场景，不存在"通道总是更好"：
+
+| 场景 | 推荐 | 理由 |
+| --- | --- | --- |
+| 传递工作项、结果、事件流 | `Channel<T>` | 所有权随消息转移，无需推理临界区 |
+| 单个计数器、标志位 | `Atomic<T>` | 无锁，开销远低于通道 |
+| 需要在多个字段间维持不变量 | `Mutex<T>` / `RwLock<T>` | 临界区能覆盖整组修改 |
 
 ```cpp
-// ✓ 好：无锁通信
-Channel<int32_t> ch;
+// ✓ 传递数据流：通道
+Channel<Work> queue(100);
 
-// ✗ 差：需要锁
-Mutex<int32_t> counter;
+// ✓ 纯计数：原子变量，用通道反而更慢
+Atomic<int64_t> processed(0);
+processed.fetch_add(1, MemoryOrder::Relaxed);
+
+// ✓ 多字段不变量：锁比通道更直接
+struct Stats {
+    Mutex<StatsData> data;   // total 与 buckets 必须一致更新
+
+    void record(int32_t value) {
+        auto guard = data.lock();
+        guard->total += value;
+        guard->buckets[bucket_of(value)] += 1;
+    }
+};
 ```
+
+真正要避免的是**用锁保护本该由所有权转移解决的问题**：若一份数据在任意时刻只
+应由一个任务持有，用通道移交比用锁共享更难出错。
 
 ## 七、对比总结
 
@@ -535,5 +558,5 @@ Mutex<int32_t> counter;
 ## 下一步
 
 - 查看 [09-gpu.md](09-gpu.md) 了解 GPU 并行与异构计算
-- 查看 [10-compiler.md](10-compiler.md) 了解编译器架构
-- 查看 [12-examples.md](12-examples.md) 查看完整的并发示例
+- 查看 [13-compiler.md](13-compiler.md) 了解编译器架构
+- 查看 [15-examples.md](15-examples.md) 查看完整的并发示例

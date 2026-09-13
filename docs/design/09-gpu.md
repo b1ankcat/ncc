@@ -58,13 +58,24 @@ Vector<float> result = gpu_data.to_host();
 ```cpp
 DeviceView<float> view = gpu_data.view();
 DeviceView<const float> read_only = gpu_data.view();
+
+// 一维访问
+size_t n = view.size();
+view[i] = 1.0f;
+
+// 二维访问：由 Matrix<T, Device::Gpu>::view() 提供 rows/cols 与行主序 stride
+DeviceView2D<float> m = gpu_matrix.view();
+size_t rows = m.rows();
+size_t cols = m.cols();
+m(i, j) = 0.0f;
 ```
 
 `Vector<T, Device::Gpu>` 始终是拥有 GPU 内存的值类型；拷贝是否深拷贝由
-Vector 契约决定。`DeviceView<T>` 只包含设备地址、长度、设备标识和必要的
-stride/shape 信息，按值捕获只复制这些描述信息。视图不延长 Vector 生命周期，
-提交的异步操作完成前所有者必须保持有效；`parallel` 返回的完成句柄必须
-`wait()` 后才能释放所有者。CPU 指针和 CPU Vector 不能转成 GPU 视图。
+Vector 契约决定。`DeviceView<T>` 只包含设备地址、长度和设备标识；
+`DeviceView2D<T>` 额外携带 rows、cols 与行主序 stride。按值捕获只复制这些
+描述信息。两者都不延长所有者的生命周期，提交的异步操作完成前所有者必须保持
+有效；`parallel` 返回的完成句柄必须 `wait()` 后才能释放所有者。CPU 指针和
+CPU Vector 不能转成 GPU 视图。
 
 ## 内存迁移 API
 
@@ -190,7 +201,7 @@ comp bool gpu_capture_safe(type T, CaptureMode mode) {
     }
 
     // 非拥有视图携带明确的设备地址和布局
-    if (is_template_instantiation_of(T, ^^DeviceView)) {
+    if (is_device_view(T)) {   // DeviceView<T> / DeviceView2D<T>
         return true;
     }
 
@@ -212,7 +223,7 @@ comp bool gpu_capture_safe(type T, CaptureMode mode) {
 **编译器检查规则：**
 
 1. **标量类型可以值捕获**（复制到设备参数区）；裸指针不属于允许的标量
-2. **`DeviceView<T>` 等非拥有 GPU 视图只能按值捕获**
+2. **`DeviceView<T>` / `DeviceView2D<T>` 等非拥有 GPU 视图只能按值捕获**
 3. **由标量和设备视图组成的聚合类型可以递归捕获**
 4. **裸指针、引用、`this`、CPU 容器和未知地址空间类型会报错**
 
@@ -411,17 +422,22 @@ void matmul_gpu(Matrix& c, const Matrix& a, const Matrix& b) {
     auto a_gpu = a.to_device();
     auto b_gpu = b.to_device();
     Matrix<float, Device::Gpu> c_gpu(c.rows(), c.cols());
-    
-    // GPU 计算
-    auto done = parallel<Device::Gpu>(c_gpu.rows(), c_gpu.cols(), [a = a_gpu.view(), b = b_gpu.view(), c = c_gpu.view()](size_t i, size_t j) {
-        float sum = 0.0f;
-        for (size_t k = 0; k < a_gpu.cols(); ++k) {
-            sum += a_gpu(i, k) * b_gpu(k, j);
-        }
-        c(i, j) = sum;
-    });
-    done.wait();
-    
+
+    // GPU 计算：kernel 内只能使用捕获进来的视图，
+    // 不能引用 a_gpu / b_gpu / c_gpu 本身（CPU 侧的拥有者对象不可传输）
+    auto done = parallel<Device::Gpu>(
+        c_gpu.rows(), c_gpu.cols(),
+        [a_view = a_gpu.view(),      // DeviceView2D<const float>
+         b_view = b_gpu.view(),
+         c_view = c_gpu.view()](size_t i, size_t j) {
+            float sum = 0.0f;
+            for (size_t k = 0; k < a_view.cols(); ++k) {
+                sum += a_view(i, k) * b_view(k, j);
+            }
+            c_view(i, j) = sum;
+        });
+    done.wait();   // 句柄销毁前必须完成，之后才能释放 a_gpu / b_gpu / c_gpu
+
     // 读回结果
     c = c_gpu.to_host();
 }
@@ -445,4 +461,4 @@ grid 大小按 `ceil(n / block_size)` 计算；`n == 0` 时不启动 kernel。�
 ## 下一步
 
 - 查看 [08-concurrency.md](08-concurrency.md) 了解任务并发
-- 查看 [10-compiler.md](10-compiler.md) 了解编译器架构
+- 查看 [13-compiler.md](13-compiler.md) 了解编译器架构

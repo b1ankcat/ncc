@@ -38,13 +38,38 @@ comp {
 参数数量、参数类型和可写性，失败返回空值或抛出标准异常，不能产生未定义行为。
 
 ```cpp
-Info dynamic_type_of(const void& object);
+// object 必须是已注册的多态类型；T 由调用处静态推导，函数取其动态类型
+comp Info dynamic_type_of<type T>(const T& object);
+
 Vector<Info> fields_of(Info type);
 Vector<Info> methods_of(Info type);
 Optional<Any> get_field(const void* object, Info field);
 void set_field(void* object, Info field, Any value);
 Optional<Any> invoke(const void* object, Info method, Vector<Any> arguments);
 ```
+
+### `Any`：运行时值容器
+
+`get_field` 和 `invoke` 处理的类型只有运行时才确定，因此用核心库的 `Any`
+承载值。`Any` 持有一个类型擦除的值及其 `Info`：
+
+```cpp
+class Any {
+public:
+    Any();                             // 空值
+    Info type() const;                 // 持有值的类型；空值返回空 Info
+
+    bool has_value() const;
+    explicit operator bool() const;
+};
+
+// 取出值：类型不匹配时返回空 Optional，不抛异常、不复制失败的对象
+comp Optional<T> cast<type T>(const Any& value);
+```
+
+`Any` 按值拥有其内容，拷贝语义取决于被持有类型的拷贝能力；不可拷贝的类型
+只能移动进出 `Any`。从 `Any` 取值统一使用已有的 `cast<T>`，不引入第二套
+取值 API。
 
 `^^T` 得到编译期 `Info`，可用于 `splice` 和代码生成；`dynamic_type_of` 得到
 运行时 `Info`，可用于查询和访问，但不能用于 `splice`、定义新类型或生成新方法。
@@ -99,7 +124,7 @@ lambda 类型可以被反射，用于分析捕获列表和签名：
 
 ```cpp
 // 反射 lambda 捕获列表
-comp auto captures = captures_of(^^Lambda);  // 返回 Span<Info>
+comp auto captures = captures_of(^^Lambda);  // 返回 Vector<Info>
 
 for (auto capture : captures) {
     auto capture_type = type_of(capture);
@@ -121,7 +146,7 @@ comp bool is_gpu_safe(type Lambda) {
 
 **Lambda 反射 API：**
 
-- `captures_of(^^Lambda)` → `Span<Info>` - 返回所有捕获的变量
+- `captures_of(^^Lambda)` → `Vector<Info>` - 返回所有捕获的变量
 - `type_of(capture)` → `Info` - 捕获变量的类型
 - `capture_mode_of(capture)` → `CaptureMode` - 捕获模式（值或引用）
 - `name_of(capture)` → `String` - 捕获变量的原始名称

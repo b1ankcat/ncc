@@ -1,4 +1,4 @@
-﻿# 十、完整示例
+# 十五、完整示例
 
 ## 定义数据结构
 
@@ -119,25 +119,26 @@ int main() {
 ```cpp
 export module test_framework;
 
-// 测试注册表（编译期构建）
-comp {
-    Vector<Info> test_functions;
-    
-    // 自动发现所有 test_ 开头的函数
+// 发现与生成在同一个 comp 上下文内完成：
+// comp 块之间不共享可变状态，跨块传递需要 comp 常量或函数返回值
+comp Vector<Info> discover_tests() {
+    Vector<Info> found;
     for (auto func : functions_of(^^current_module)) {
         if (name_of(func).starts_with("test_")) {
-            test_functions.push(func);
+            found.push(func);
         }
     }
+    return found;
 }
 
-// 运行所有测试
+// 运行所有测试：函数体由编译期展开生成
 void run_all_tests() {
     comp {
-        for (auto func : test_functions) {
-            println("Running: {}", name_of(func));
-            // 调用测试函数
-            [: invoke(func) :];
+        for (auto func : discover_tests()) {
+            // 生成的是运行时代码：编译期只决定生成哪些语句，
+            // 循环本身在编译期展开，println 和调用在运行时执行
+            println("Running: {}", name_of(func));   // name_of 是编译期常量
+            [:func:]();                              // 直接调用，不经过运行时 invoke
         }
     }
 }
@@ -201,8 +202,9 @@ void print_shape_info(const Shape& s) {
     println("Shape type: {}", name_of(type));
     println("Area: {}", s.area());
     
-    // 遍历字段（运行时）
-    for (auto field : nonstatic_data_members_of(type)) {
+    // 遍历字段（运行时）：运行时 Info 用 fields_of，
+    // nonstatic_data_members_of 只用于编译期生成场景
+    for (auto field : fields_of(type)) {
         println("  {}: {}", name_of(field), size_of(type_of(field)));
     }
 }

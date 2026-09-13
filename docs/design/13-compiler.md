@@ -1,4 +1,4 @@
-# 十一、编译器架构
+# 十三、编译器架构
 
 ## 核心设计：MLIR 统一后端
 
@@ -27,29 +27,25 @@ Type Checking + Comp Execution (类型检查 + 编译期求值)
     ↓
 MLIR Generation
     ↓
-┌───────────────────────────────────┐
-│ MLIR Dialect Lowering (方言降低)  │
-│                                   │
-│  ncc dialect (NCC 特定操作)       │
-│      ↓                            │
-│  affine/scf (循环和控制流)        │
-│      ↓                            │
-│  ┌────────┬────────────┐          │
-│  │        │            │          │
-│  CPU路径  │  GPU路径   │          │
-│  ↓        │   ↓        │          │
-│  llvm     │   gpu      │          │
-│  dialect  │   dialect  │          │
-│  ↓        │   ↓        │          │
-│  LLVM IR  │   ┌──┬──┐  │          │
-│           │   │  │  │  │          │
-│           │  CUDA│ │  │          │
-│           │  PTX │ROCm│          │
-│           │     │LLGPU│          │
-└───────────┴─────┴──┴──┘
-    ↓           ↓
-  x86/ARM    NVIDIA/AMD GPU
-  机器码      机器码
+┌─────────────────────────────────────────────┐
+│ MLIR Dialect Lowering (方言降低)            │
+│                                             │
+│   ncc dialect (NCC 特定操作)                │
+│       ↓                                     │
+│   affine/scf (循环和控制流)                 │
+│       ↓                                     │
+│   ┌───────────────┬───────────────────┐     │
+│   │   CPU 路径    │     GPU 路径      │     │
+│   │      ↓        │        ↓          │     │
+│   │  llvm dialect │   gpu dialect     │     │
+│   │      ↓        │        ↓          │     │
+│   │   LLVM IR     │  ┌─────┬───────┐  │     │
+│   │               │  │ PTX │ ROCDL │  │     │
+│   │               │  └─────┴───────┘  │     │
+│   └───────────────┴───────────────────┘     │
+└─────────────────────────────────────────────┘
+         ↓                    ↓
+   x86/ARM 机器码     NVIDIA/AMD GPU 机器码
 ```
 
 ## 编译阶段详解
@@ -358,9 +354,9 @@ ncc.vector.push_unchecked %v1, %val3
 ### 模块级缓存
 
 ```
-src/main.ncc    → .ccc/cache/main.mlir → .ccc/cache/main.o
-src/utils.ncc   → .ccc/cache/utils.mlir → .ccc/cache/utils.o
-src/models.ncc  → .ccc/cache/models.mlir → .ccc/cache/models.o
+src/main.ncc    → target/.ccc-cache/main.mlir   → target/.ccc-cache/main.o
+src/utils.ncc   → target/.ccc-cache/utils.mlir  → target/.ccc-cache/utils.o
+src/models.ncc  → target/.ccc-cache/models.mlir → target/.ccc-cache/models.o
 
 只重新编译修改过的模块
 ```
@@ -443,4 +439,4 @@ ccc build --mlir-print-ir-module-scope --mlir-print-local-scope
 ## 下一步
 
 - 查看 [09-gpu.md](09-gpu.md) 了解 GPU 编译细节
-- 查看 [12-build-system.md](12-build-system.md) 了解构建系统
+- 查看 [11-build-system.md](11-build-system.md) 了解构建系统

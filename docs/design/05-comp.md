@@ -27,8 +27,13 @@ comp struct Config {
 C++ 的 `类型 参数名` 写法；没有独立的 `fn` 关键字。类型参数列表属于总纲
 已批准的 comp 扩展，求值与实例化阶段仍待审查第 3 项统一定稿。
 
+下面的 `Vector` 只演示 `comp type` 的调用形式和布局生成，**不是核心库 Vector
+的真实定义**：真实 Vector 用 `define_class` + `StorageOps` 生成，并须满足
+[通用容器原语](03-memory.md#通用容器原语)与
+[define_class](04-reflection.md#完整类定义define_class-api)规定的完整生命周期契约。
+
 ```cpp
-// 泛型类型定义（核心库 Vector 的简化示例）
+// 泛型类型定义（仅演示布局生成，省略全部生命周期操作）
 comp type Vector(type T) {
     // 用反射 + splice 生成具体的 Vector_T 类型
     return [: define_aggregate("Vector", {
@@ -63,10 +68,10 @@ comp type Vector(type T) { /* ... */ }
 Vector<int32_t> v;       // <> 调用：编译期 Vector(^^int32_t)
 Vector(^^int32_t)        // () 直接调用，返回类型本身（不是对象）
 
-// 类型查询
-comp bool is(type Target, type Source) { /* 编译期类型检查 */ }
+// 类型关系查询：编译期检查两个类型的关系，与运行时的 is<T>(value) 不同名
+comp bool derives_from(type Derived, type Base) { /* 编译期类型检查 */ }
 
-is(^^File, ^^Writer)     // 编译期检查两个类型的关系
+derives_from(^^File, ^^Writer)     // 编译期检查 File 是否派生自 Writer
 
 // 智能指针：类型和工厂都是 comp 函数
 comp type unique_ptr(type T) { /* 生成 unique_ptr<T> 类型 */ }
@@ -272,14 +277,15 @@ println("{}", p->name);
 ```cpp
 // 类型参数包（... 是 C++26 已有语法）
 comp void log<type... Args>(Args... args) {
-    // 用反射遍历参数包
-    for (auto arg : {args...}) {
-        println("{}", arg);
-    }
+    // 用包展开逐个处理：参数类型各不相同，不能收进同一个初始化列表
+    (println("{}", args), ...);
 }
 
 log<int32_t, String, double>(42, "hello", 3.14);
 ```
+
+参数包展开使用 C++17 已有的折叠表达式。`{args...}` 只适用于所有参数类型相同
+的情况；异质参数包必须用折叠表达式或递归展开。
 
 ## 裸 `comp { ... }` 块
 
@@ -327,15 +333,19 @@ comp {
 
 ```cpp
 comp void process() {
-    if (mode == "debug") {
+    // profile() 是核心库提供的编译期查询，返回当前构建配置
+    if (profile() == "debug") {
         println("Debug mode enabled");
         enable_logging();
-    } else if (mode == "release") {
+    } else if (profile() == "release") {
         println("Release mode");
         enable_optimizations();
     }
 }
 ```
+
+条件编译使用的目标与配置查询统一写成函数形式：`profile()`、`target_os()`、
+`target_arch()`、`target_triple()`。这些是编译期常量函数，分支在实例化时剪枝。
 
 ## 批量处理：遍历当前模块内的类型
 

@@ -191,7 +191,7 @@ void tcp_server(uint16_t port) {
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
     
-    if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(sock, cast<sockaddr*>(&addr).value(), sizeof(addr)) < 0) {
         close(sock);
         throw NetworkException("Failed to bind");
     }
@@ -285,12 +285,12 @@ export extern "C" {
     
     // 销毁上下文
     void mylib_destroy(void* ctx) {
-        delete static_cast<Context*>(ctx);
+        delete cast<Context*>(ctx).value();
     }
     
     // 处理数据
     int32_t mylib_process(void* ctx, const uint8_t* data, size_t len) {
-        auto* c = static_cast<Context*>(ctx);
+        auto* c = cast<Context*>(ctx).value();
         
         // 使用 NCC 的内部实现
         c->buffer.resize(len);
@@ -301,7 +301,7 @@ export extern "C" {
     
     // 查询结果
     int32_t mylib_get_result(void* ctx, const char* key) {
-        auto* c = static_cast<Context*>(ctx);
+        auto* c = cast<Context*>(ctx).value();
         String k = String::from_c_str(key);
         
         if (auto val = c->cache.get(k)) {
@@ -492,21 +492,21 @@ export extern "C" {
 name = "myapp"
 version = "1.0.0"
 
-# 系统库
-[dependencies.system]
-pthread = "*"
-m = "*"  # libm (数学库)
-
-# 第三方 C 库（pkg-config）
+# C 库通过 kind = "c-library" 声明，由 pkg-config 解析头文件与链接参数
 [dependencies]
 sqlite3 = { version = "3.0", kind = "c-library" }
 openssl = { version = "1.1", kind = "c-library" }
-
-# 自定义路径
-[build]
-link_dirs = ["vendor/lib"]
-link_libs = ["mylib"]
 ```
+
+声明 C 库只有两种途径，不提供第三种：
+
+| 途径 | 适用场景 |
+| --- | --- |
+| `[dependencies]` 中 `kind = "c-library"` | 系统或第三方库能被 pkg-config 找到 |
+| `build.ncc` 中 `link_lib()` / `link_search()` | 手工指定路径、随项目分发的 vendor 库、需要条件判断 |
+
+`libc`、`libm`、`pthread` 这类始终存在的系统库由目标 ABI 隐含提供，不需要声明；
+需要显式控制链接方式时在 `build.ncc` 中调用 `link_lib`。
 
 ### build.ncc 中链接
 
@@ -593,7 +593,7 @@ export extern "C" {
     }
     
     void destroy_context(void* ctx) {
-        delete static_cast<Context*>(ctx);
+        delete cast<Context*>(ctx).value();
     }
     
     // C 代码只操作不透明指针，不访问内部结构
@@ -692,4 +692,4 @@ public:
 
 - 查看 [11-build-system.md](11-build-system.md) 了解如何链接 C 库
 - 查看 [03-memory.md](03-memory.md) 了解内存管理
-- 查看 [13-performance.md](13-performance.md) 了解性能优化
+- 查看 [14-performance.md](14-performance.md) 了解性能优化

@@ -273,6 +273,9 @@ using Ops = StorageOps<T, Device::Cpu>;
 - 空 Vector 不构造任何 T；`reserve(n)` 只增加容量，不增加 size，不要求默认构造。
 - `Vector<T>(n)` 与默认追加元素的 `resize(n)` 仅在 T 可默认构造时可用；第 k
   个构造失败时清理此前已构造的元素，构造中的 Vector 不会泄漏存储。
+- `Vector<T>{a, b, c}` 从初始化列表逐个拷贝构造，要求 T 可拷贝构造；
+  `Vector<T>(first, last)` 从迭代器区间逐个构造，先按可测距离的区间预分配。
+  两者的失败清理与大小构造一致。
 - `emplace(args...)` 直接构造尾元素；`push(const T&)` 拷贝构造，`push(T&&)`
   按 C++ 重载规则构造。成功后才递增 size，不以赋值写入未初始化槽位。
 - `clear()` 逆序析构活动元素、将 size 置零并保留容量；Vector 析构再释放存储。

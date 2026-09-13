@@ -84,14 +84,15 @@ ccc run
 - **[comp 系统](docs/design/05-comp.md)** - 编译期计算与泛型
 - **[类型转换](docs/design/06-casting.md)** - `cast<T>` 统一转换
 - **[接口系统](docs/design/07-interfaces.md)** - 抽象基类 + 虚函数
+- **[并发](docs/design/08-concurrency.md)** - TaskScope、Channel、数据并行
 - **[GPU](docs/design/09-gpu.md)** - 设备视图与异构计算
-- **[编译器架构](docs/design/11-compiler.md)** - MLIR/LLVM 后端
 - **[包管理](docs/design/10-packages.md)** - 依赖解析、全局缓存
 - **[构建系统](docs/design/11-build-system.md)** - package.toml + build.ncc
 - **[C 互操作](docs/design/12-interop.md)** - 显式 C ABI
-- **[完整示例](docs/design/12-examples.md)** - HTTP 服务器、测试框架等
-- **[性能](docs/design/13-performance.md)** - Benchmark 与优化
-- **[语言对比](docs/design/13-comparison.md)** - vs C++/Rust/Zig
+- **[编译器架构](docs/design/13-compiler.md)** - MLIR/LLVM 后端
+- **[性能](docs/design/14-performance.md)** - Benchmark 与优化
+- **[完整示例](docs/design/15-examples.md)** - HTTP 服务器、测试框架等
+- **[语言对比](docs/design/16-comparison.md)** - vs C++/Rust/Zig
 
 ## 与其他语言的对比
 
@@ -118,7 +119,7 @@ ccc run
 - [ ] **Phase 1**: 核心编译器（6-12 个月）
   - Lexer、Parser、AST、HIR
   - 类型检查、`comp` 执行引擎
-  - C99 代码生成
+  - MLIR 代码生成（CPU 目标）
 - [ ] **Phase 2**: 核心库（3-6 个月）
   - String、Vector、Optional
   - 智能指针、println/format

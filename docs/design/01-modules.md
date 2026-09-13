@@ -28,11 +28,28 @@ int main() {
 
 ## 核心库是内置全局符号
 
-`String`、`Vector<T>`、`Optional<T>`、`unique_ptr<T>`、`shared_ptr<T>`、
-`weak_ptr<T>`、`make_unique`/`make_shared`、`println`、反射用的
-`Info`/`^^`/`[: :]` 等，全部像 `int32_t`、
-`bool` 一样，是语言内置的一部分，直接使用，不挂在任何 `std` 或其他命名空间下，
-也不需要额外 `import`。用户自己拆分的多文件项目之间用 `import 模块名;` 互相引用。
+以下符号像 `int32_t`、`bool` 一样是语言内置的一部分，直接使用，不挂在任何
+`std` 或其他命名空间下，也不需要 `import`。**本表是核心库全局符号的唯一来源**，
+其他章节不再各自列举。用户自己拆分的多文件项目之间用 `import 模块名;` 互相引用。
+
+| 类别 | 符号 |
+| --- | --- |
+| 字符串 | `String`、`StringView` |
+| 容器 | `Vector<T, Device>`、`Array<T, N>`、`HashMap<K, V>` |
+| 可选值 | `Optional<T>`、`reference_wrapper<T>` |
+| 智能指针 | `unique_ptr<T>`、`shared_ptr<T>`、`weak_ptr<T>`、`make_unique`、`make_shared` |
+| 值容器 | `Any` |
+| 输出与格式化 | `println`、`print`、`format`、`Logger`、`log_info`/`log_warn`/`log_error`、`LogLevel` |
+| 反射 | `Info`、`^^`、`[: :]`、`name_of`、`type_of`、`fields_of`、`methods_of`、`size_of`、`alignment_of`、`offset_of`、`nonstatic_data_members_of`、`dynamic_type_of`、`get_field`、`set_field`、`invoke`、`define_aggregate`、`define_class` |
+| 类型操作 | `cast<T>`、`is<T>`、`move`、`declval`、`StorageOps` |
+| 异常 | `Exception` 及其派生层次（见[类型系统](02-types.md#标准异常层次)） |
+| 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Mutex<T>`、`RwLock<T>`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule` |
+| 设备 | `Device`、`DeviceView<T>`、`DeviceView2D<T>`、`GpuId` |
+| 编译期查询 | `profile()`、`target_os()`、`target_arch()`、`target_triple()` |
+| 文件 | `File` |
+
+低精度数值类型（`float16_t`、`bfloat16_t`、`float8_e4m3_t` 等）见
+[类型系统](02-types.md#基础类型)，同为内置类型。
 
 导入模块不自动形成 namespace；同名导出使用已批准的 `import module as alias;`
 扩展建立模块别名：
@@ -47,6 +64,46 @@ other_http::Client b;
 
 `as` 只建立模块访问前缀，不改变导出符号原名。未限定使用存在多个候选时，
 编译器必须报告歧义并要求使用别名。
+
+### `::` 的三种用途
+
+删除 `namespace` 后 `::` 仍然保留，但只有三种确定含义，按左操作数的种类区分：
+
+| 形式 | 左操作数 | 含义 |
+| --- | --- | --- |
+| `mod::name` | 已导入的模块名或其别名 | 访问该模块的导出符号 |
+| `Type::member` | 类型名 | 类的静态成员、嵌套类型、tagged enum 变体 |
+| `Enum::Value` | 枚举类型名 | 枚举成员 |
+
+三者不会歧义：模块名不能与类型名同名（编译器在导入时检查并报错）。`::` 不能
+嵌套用于模块（不存在 `a::b::c` 形式的子模块路径），模块名本身可以含 `.`，
+如 `import net.http;` 后写 `net.http::Client`。没有全局作用域限定符 `::name`
+的用法，因为不存在需要与之区分的嵌套命名空间。
+
+```cpp
+import net.http as http;
+
+http::Client client;              // 模块导出符号
+File::default_permissions();      // 类静态成员
+Shape::Circle(5.0);               // tagged enum 变体
+LogLevel::Debug;                  // 枚举成员
+```
+
+### 内置模块
+
+`gpu`、`benchmark`、`build`、`libc`、`posix` 等由编译器提供的模块**需要显式
+`import`**，与第三方包写法一致；它们不是核心库的全局符号。区别在于无需在
+`package.toml` 中声明依赖：
+
+```cpp
+import gpu;         // 内置模块，不需要写进 package.toml
+import http;        // 第三方包，必须在 package.toml 声明
+
+gpu::available();
+```
+
+只有 `String`、`Vector`、`Optional`、`println` 这类核心库符号才是无需 `import`
+的全局符号。
 
 ## 格式化：`println` / `format`
 
@@ -193,11 +250,14 @@ ccc link main.o containers.o user.o → main.exe
 **缓存优化：**
 
 ```bash
-.ccc_cache/
+target/.ccc-cache/
   ├── containers.CustomPtr_User.o      # CustomPtr<User> 的缓存
   ├── containers.CustomPtr_Product.o   # CustomPtr<Product> 的缓存
   └── ...
 ```
+
+项目内的编译缓存位于 `target/.ccc-cache/`，跨项目共享的包缓存位于
+`~/.ccc/cache/`（见 [包管理](10-packages.md#全局缓存结构)）。
 
 编译器为每个 `<comp_class, 类型参数>` 组合缓存生成的代码，
 如果定义未改变，直接使用缓存，加速增量编译。

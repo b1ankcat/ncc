@@ -132,8 +132,11 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
 - [06-casting.md](06-casting.md) - 类型转换
 - [07-interfaces.md](07-interfaces.md) - 接口系统
 - [08-concurrency.md](08-concurrency.md) - 并发与多线程
-- [09-compiler.md](09-compiler.md) - 编译器架构
+- [09-gpu.md](09-gpu.md) - GPU 与异构计算
 - [10-packages.md](10-packages.md) - 包管理系统
 - [11-build-system.md](11-build-system.md) - 构建系统
-- [12-examples.md](12-examples.md) - 完整示例
-- [13-comparison.md](13-comparison.md) - 语言对比
+- [12-interop.md](12-interop.md) - C 互操作
+- [13-compiler.md](13-compiler.md) - 编译器架构
+- [14-performance.md](14-performance.md) - 性能基准与优化
+- [15-examples.md](15-examples.md) - 完整示例
+- [16-comparison.md](16-comparison.md) - 语言对比

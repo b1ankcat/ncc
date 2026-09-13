@@ -1,4 +1,4 @@
-﻿# 十一、构建系统
+# 十一、构建系统
 
 ## 核心主旨：声明式配置 + 受限编译期构建脚本
 
@@ -40,6 +40,21 @@ comp {
 文件、目录 glob、环境变量、网络 URL 及校验和、外部工具版本和生成输出都会
 进入构建图与缓存键。脚本只能写入 `out_dir()`；并行命令不得写入重叠输出。
 相同的输入、工具、目标和配置必须产生相同的结构化构建描述。
+
+### 声明式 API 是规范形式
+
+`build.ncc` 只有一套语义：脚本执行的结果是一份**结构化构建描述**，编译器读取
+该描述后才真正执行外部命令。因此存在两层写法，但不是两套机制：
+
+| 层次 | 函数 | 说明 |
+| --- | --- | --- |
+| 规范形式 | `input_file`、`tool`、`custom_command`、`embed_as_constant` | 显式登记输入、工具与输出，直接构成构建图节点 |
+| 便捷封装 | `exec`、`add_source`、`link_lib`、`rerun_if_changed` | 在规范形式之上的简写，展开为等价的构建图节点 |
+
+便捷封装不绕过登记：`exec(...)` 展开为一个 `custom_command`，其 `program` 必须
+来自 `tool(...)`；`add_source(p)` 要求 `p` 在 `out_dir()` 内并声明为某个命令的
+输出。因此 `exec` 不是"立即执行子进程"，而是"向构建图追加一条命令"。
+命令之间的并行由编译器按构建图调度，脚本自身不启动线程。
 
 **设计目标：**
 1. **可并行**：依赖图分析 + 多核编译
@@ -95,17 +110,25 @@ $ ccc build
 
 ### 使用 comp 函数替代构建脚本
 
-大部分代码生成场景用 comp 函数即可，无需外部脚本：
+大部分代码生成场景用 comp 函数即可，无需外部工具。但普通 `comp` 不能读文件：
+外部输入必须由 `build.ncc` 登记，再作为编译期常量交给普通 `comp` 使用。
 
 ```cpp
-// src/models.ncc
+// build.ncc —— 登记外部输入，内容进入构建图与缓存键
+import build;
+
+comp {
+    embed_as_constant("USER_SCHEMA", input_file("schema/user.json"));
+}
+```
+
+```cpp
+// src/models.ncc —— 普通 comp 只消费已登记的编译期常量
 import json;
 
-// 编译期从 JSON schema 生成类型
 comp {
-    String schema = read_file("schema/user.json");
-    auto types = parse_json_schema(schema);
-    
+    auto types = parse_json_schema(USER_SCHEMA);
+
     for (auto type_def : types) {
         generate_struct(type_def);
     }
@@ -122,7 +145,10 @@ struct User {
 **优势：**
 - ✅ 无需外部工具
 - ✅ 类型安全（生成的代码立即参与类型检查）
-- ✅ 增量构建（文件变化自动重新生成）
+- ✅ 增量构建（`input_file` 已登记，文件变化自动重新生成）
+
+`read_file`、`file_exists`、`glob`、`env` 等访问外部状态的函数只存在于
+`import build` 提供的受限 API 中，在普通源文件的 `comp` 块里不可见。
 
 ## 第三层：预构建钩子（build.ncc）
 
@@ -169,7 +195,7 @@ comp {
 ```
 步骤 1：依赖解析
   - 读取 package.toml
-  - MVS 算法选择版本
+  - 求约束交集，选择最低可用版本
   - 生成 package-lock.toml
   - 下载依赖到全局缓存
 
@@ -221,26 +247,56 @@ String build_dir();         // "./target/release"
 String out_dir();           // "./target/release/build/myapp_out"
 ```
 
-### 代码生成
+### 输入登记（规范形式）
 
 ```cpp
-// 执行外部命令
-comp void exec(String cmd, Vector<String> args);
+// 登记单个文件输入；缺失时抛出 FileNotFound
+comp String input_file(String path);
 
-// 示例
-comp {
-    exec("protoc", {
-        "--ncc_out=" + out_dir(),
-        "schema/messages.proto",
-    });
-}
+// 同上，但缺失时返回空 Optional（同样登记"不存在"这一事实）
+comp Optional<String> try_input_file(String path);
 
-// 添加生成的源文件
+// 登记 glob 模式及其匹配结果；新增/删除匹配文件都会触发重新构建
+comp Vector<String> input_glob(String pattern);
+
+// 登记外部工具及其版本要求；返回可作为 program 使用的句柄
+comp Tool tool(String name, String version_requirement);
+
+// 登记环境变量读取
+comp Optional<String> env(String key);
+
+// 登记网络输入，必须提供校验和
+comp String input_url(String url, String sha256);
+
+// 把已登记输入的内容作为编译期常量暴露给普通源文件的 comp 块
+comp void embed_as_constant(String name, String content);
+```
+
+### 命令与代码生成
+
+```cpp
+// 登记一条命令：inputs/outputs 构成构建图的边
+comp void custom_command(CommandSpec spec);
+
+struct CommandSpec {
+    Vector<String> inputs;
+    Vector<String> outputs;    // 必须位于 out_dir() 内，且不与其他命令重叠
+    Tool program;
+    Vector<String> args;
+};
+
+// 便捷封装：展开为一条 custom_command
+comp void exec(Tool program, Vector<String> args);
+
+// 添加生成的源文件；path 必须是某条命令声明过的输出
 comp void add_source(String path);
 
 // 示例
 comp {
-    add_source(out_dir() + "/generated.ncc");
+    auto generated = out_dir() + "/generated.ncc";
+    exec(tool("protoc", "25.1"),
+         {"--ncc_out=" + out_dir(), input_file("schema/messages.proto")});
+    add_source(generated);
 }
 ```
 
@@ -251,7 +307,7 @@ comp {
 comp void link_lib(String name);
 comp void link_lib(String name, LinkKind kind);
 
-enum LinkKind {
+enum class LinkKind {
     Static,   // 静态链接
     Dynamic,  // 动态链接
 };
@@ -287,37 +343,45 @@ comp {
 
 ### 增量构建
 
+`input_file`、`input_glob`、`env` 等登记函数已经把对应输入写进构建图，因此
+**不需要**额外声明重新构建条件。只有一种情况需要显式声明：脚本读取了某个文件
+但没有把它作为命令输入，例如仅用于决定分支的配置文件。
+
 ```cpp
-// 声明文件依赖（变化时重新运行 build.ncc）
+// 声明额外的文件依赖（不作为任何命令的输入，但影响构建描述）
 comp void rerun_if_changed(String path);
 
-// 声明环境变量依赖
-comp void rerun_if_env_changed(String var);
-
-// 示例
+// 示例：codegen.py 由 python 间接调用，不出现在 inputs 里
 comp {
-    rerun_if_changed("schema.proto");
     rerun_if_changed("codegen.py");
-    rerun_if_env_changed("PROTOC_PATH");
 }
 ```
+
+没有 `rerun_if_env_changed`：环境变量只能通过 `env()` 读取，而 `env()` 本身就
+完成了登记。
 
 ### 环境变量
 
 ```cpp
-// 获取环境变量
+// 读取环境变量（登记进缓存键）
 comp Optional<String> env(String key);
 
-// 设置环境变量（子进程可见）
-comp void set_env(String key, String value);
+// 为某条命令设置环境变量
+comp void command_env(String key, String value);
+```
 
-// 示例
+`command_env` 作用于随后登记的命令，并进入这些命令的缓存键。构建脚本不能修改
+编译器自身进程的环境，因此没有全局 `set_env`——否则命令的执行结果会依赖脚本的
+执行顺序，破坏可重现性。
+
+```cpp
 comp {
-    if (auto protoc = env("PROTOC")) {
-        exec(protoc.value(), {"--version"});
-    } else {
-        throw RuntimeError("PROTOC not found");
-    }
+    // 允许用 PROTOC 覆盖工具路径，缺失时回退到 PATH 查找
+    auto protoc = env("PROTOC").has_value()
+        ? tool_at(env("PROTOC").value(), "25.1")
+        : tool("protoc", "25.1");
+
+    exec(protoc, {"--version"});
 }
 ```
 
@@ -389,31 +453,35 @@ comp {
   [串行] 编译 myapp
 ```
 
-### build.ncc 内部并行
+### build.ncc 声明的命令并行
+
+构建脚本自身单线程执行，只负责登记命令；相互独立的命令由编译器按构建图并行
+调度。脚本里不需要（也不能）创建线程：
 
 ```cpp
 import build;
-import thread;
 
 comp {
-    // 并行生成多个文件
-    auto tasks = Vector<Thread::Handle>();
-    
-    for (auto proto_file : glob("schema/*.proto")) {
-        tasks.push(Thread::spawn([=]{
-            exec("protoc", {
-                "--ncc_out=" + out_dir(),
-                proto_file,
-            });
-        }));
-    }
-    
-    // 等待所有任务完成
-    for (auto& task : tasks) {
-        task.join();
+    auto protoc = tool("protoc", "25.1");
+
+    // 每个 proto 文件登记为一条独立命令，输出互不重叠
+    for (auto proto_file : input_glob("schema/*.proto")) {
+        auto generated = out_dir() + "/" + stem_of(proto_file) + ".ncc";
+
+        custom_command({
+            .inputs = {proto_file},
+            .outputs = {generated},
+            .program = protoc,
+            .args = {"--ncc_out=" + out_dir(), "--proto_path=schema", proto_file},
+        });
+
+        add_source(generated);
     }
 }
 ```
+
+编译器发现这些命令没有相互依赖，会并行执行它们。输出路径重叠的命令会在构建图
+校验阶段被拒绝，而不是留到运行时竞争同一文件。
 
 ## 增量构建
 
@@ -422,8 +490,10 @@ comp {
 ```
 1. build.ncc 自身修改
 2. build-dependencies 版本变化
-3. rerun_if_changed() 声明的文件修改
-4. rerun_if_env_changed() 声明的环境变量变化
+3. input_file() / input_glob() 登记的文件或匹配结果变化
+4. env() 读取的环境变量变化
+5. tool() 解析到的外部工具版本或路径变化
+6. rerun_if_changed() 显式声明的文件修改
 ```
 
 ### 编译器的增量检查
@@ -432,9 +502,11 @@ comp {
 增量检查流程（非 NCC 源代码）：
 1. 检查 build.ncc 自身是否变化。
 2. 检查 build-dependencies 是否变化。
-3. 检查声明的文件输入是否变化。
-4. 检查声明的环境变量是否变化。
-以上任一项变化时重新执行构建脚本，否则继续检查其余缓存输入。
+3. 检查登记的文件输入与 glob 匹配结果是否变化。
+4. 检查登记的环境变量是否变化。
+5. 检查登记的外部工具版本与路径是否变化。
+以上任一项变化时重新执行构建脚本，得到新的结构化构建描述；
+描述未变时沿用上次的构建图，再按各命令自身的缓存键决定是否重跑。
 ```
 
 ## 错误处理
@@ -463,8 +535,11 @@ Build failed. Fix the errors above and retry.
 使用标准 `throw`，不引入宏式报错语法。运行时仍按普通异常规则传播。
 
 ```cpp
+// build.ncc：input_file 登记输入，文件缺失时抛出
+import build;
+
 comp {
-    if (!file_exists("required_file.txt")) {
+    if (!try_input_file("required_file.txt")) {
         throw RuntimeError("required_file.txt not found");
     }
 }
@@ -475,6 +550,10 @@ comp {
 //   at build.ncc:5
 ```
 
+`input_file` 在文件缺失时直接抛出 `FileNotFound`；`try_input_file` 返回
+`Optional`，用于需要自定义诊断或可选输入的场景。两者都会把该路径（含"不存在"
+这一事实）登记进构建图，文件之后被创建会触发重新构建。
+
 ## 实际示例
 
 ### 示例 1：Protocol Buffers
@@ -484,25 +563,26 @@ comp {
 import build;
 
 comp {
-    // 查找所有 .proto 文件
-    auto proto_files = glob("schema/*.proto");
-    
-    for (auto proto : proto_files) {
-        // 调用 protoc
-        exec("protoc", {
-            "--ncc_out=" + out_dir(),
-            "--proto_path=schema",
-            proto,
+    auto protoc = tool("protoc", "25.1");
+
+    // input_glob 登记模式本身：新增或删除 .proto 文件都会触发重新构建
+    for (auto proto : input_glob("schema/*.proto")) {
+        auto generated = out_dir() + "/" + stem_of(proto) + ".ncc";
+
+        custom_command({
+            .inputs = {proto},
+            .outputs = {generated},
+            .program = protoc,
+            .args = {"--ncc_out=" + out_dir(), "--proto_path=schema", proto},
         });
-        
-        // 声明依赖
-        rerun_if_changed(proto);
+
+        add_source(generated);
     }
-    
-    // 添加生成的文件
-    add_source(out_dir() + "/messages.ncc");
 }
 ```
+
+`input_glob` 同时登记匹配模式和匹配结果，因此不需要额外的 `rerun_if_changed`。
+每个 proto 文件对应一条独立命令和一个独立输出，编译器可并行执行。
 
 ### 示例 2：FFI Bindings
 
@@ -511,19 +591,22 @@ comp {
 import build;
 
 comp {
+    auto header = input_file("vendor/mylib.h");   // 登记输入
+    auto bindings = out_dir() + "/bindings.ncc";
+
     // 生成 C 库的绑定
-    exec("bindgen", {
-        "vendor/mylib.h",
-        "--output", out_dir() + "/bindings.ncc",
+    custom_command({
+        .inputs = {header},
+        .outputs = {bindings},
+        .program = tool("bindgen", "0.69"),
+        .args = {header, "--output", bindings},
     });
-    
-    add_source(out_dir() + "/bindings.ncc");
-    
+
+    add_source(bindings);
+
     // 链接 C 库
     link_search(project_root() + "/vendor/lib");
     link_lib("mylib", LinkKind::Static);
-    
-    rerun_if_changed("vendor/mylib.h");
 }
 ```
 
@@ -534,17 +617,31 @@ comp {
 import build;
 
 comp {
-    // 编译 C 文件
-    for (auto c_file : glob("vendor/*.c")) {
-        exec("gcc", {
-            "-c",
-            "-O2",
-            "-o", out_dir() + "/vendor.o",
-            c_file,
+    auto cc = tool("gcc", "13");
+    Vector<String> objects;
+
+    // 每个 .c 文件编译到各自的 .o：所有命令共用一个输出会被构建图拒绝
+    for (auto c_file : input_glob("vendor/*.c")) {
+        auto object = out_dir() + "/" + stem_of(c_file) + ".o";
+        objects.push(object);
+
+        custom_command({
+            .inputs = {c_file},
+            .outputs = {object},
+            .program = cc,
+            .args = {"-c", "-O2", "-o", object, c_file},
         });
     }
-    
-    // 链接编译后的对象文件
+
+    // 打包为静态库后链接
+    auto archive = out_dir() + "/libvendor.a";
+    custom_command({
+        .inputs = objects,
+        .outputs = {archive},
+        .program = tool("ar", "2.41"),
+        .args = concat({"rcs", archive}, objects),
+    });
+
     link_search(out_dir());
     link_lib("vendor", LinkKind::Static);
 }
@@ -571,4 +668,4 @@ comp {
 
 - 查看 [10-packages.md](10-packages.md) 了解包管理
 - 查看 [12-interop.md](12-interop.md) 了解 C 互操作
-- 查看 [13-performance.md](13-performance.md) 了解性能优化
+- 查看 [14-performance.md](14-performance.md) 了解性能优化
