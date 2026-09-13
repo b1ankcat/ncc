@@ -18,6 +18,9 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[00-overview.md](00-overview.md)** - 核心理念与设计原则
   - 语法基线：C++26 只删不加
   - 唯三例外：`comp`、tagged enum、扩展 `import`
+  - 主要删除项：头文件、`namespace`、`template`、`concept`、四种 cast、
+    预处理器、`co_await` 与 awaiter 协议
+  - attribute 保留及"必须可忽略"判据
   - 设计原则与哲学
 
 - **[01-modules.md](01-modules.md)** - 模块系统
@@ -55,6 +58,7 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[06-casting.md](06-casting.md)** - 类型转换
   - `cast<T>` 统一转换函数
   - `is<T>` 类型检查
+  - `bit_cast<T>` 位模式重解释与指针转换规则
   - `comp bool` 函数替代 `concept`
 
 - **[07-interfaces.md](07-interfaces.md)** - 接口系统
@@ -62,11 +66,13 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - 接口与反射结合
 
 - **[08-concurrency.md](08-concurrency.md)** - 并发与多线程
-  - 结构化轻量级任务（M:N 调度）
-  - 结构化任务作用域、显式 join/取消和通道关闭
-  - GPU 捕获的设备可传输性检查
-  - 通道与 Select
-  - 并发原语与任务调度（不增加额外借用或数据竞争检查）
+  - 结构化轻量级任务（M:N 调度），唯一入口 `TaskScope::spawn`
+  - `Task<T>` 生命周期：析构即 detach，孤儿异常在作用域汇总
+  - 通道：`Sender`/`Receiver` 引用计数，所有权决定关闭时机
+  - 惰性序列：生成器协程（保留 `co_yield`，删除 `co_await`）
+  - 阻塞的 C 调用与协作式调度的让出点
+  - 异步句柄对照：`Task<T>` / `Completion` / `Completion<T>`
+  - 并发原语（不增加额外借用或数据竞争检查）
 
 - **[09-gpu.md](09-gpu.md)** - GPU 与异构计算
   - DeviceView 与设备可传输性

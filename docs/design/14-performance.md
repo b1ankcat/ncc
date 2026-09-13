@@ -213,12 +213,13 @@ benchmark("gpu_saxpy", []() {
     size_t n = 10000000;
     Vector<float, Device::Gpu> x(n), y(n);
     float a = 2.5f;
-    
-    parallel<Device::Gpu>(n, [x_view = x.view(), y_view = y.view(), a](size_t i) {
+
+    // 显式接收句柄并 wait()：计时范围必须覆盖 kernel 执行，
+    // 而不是只覆盖提交动作
+    auto done = parallel<Device::Gpu>(n, [x_view = x.view(), y_view = y.view(), a](size_t i) {
         y_view[i] = a * x_view[i] + y_view[i];
     });
-    
-    gpu::synchronize();  // 等待完成
+    done.wait();
 });
 
 // 对比 CPU 版本

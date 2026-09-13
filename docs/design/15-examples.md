@@ -229,14 +229,18 @@ struct Model {
     Vector<float8_e4m3_t> activations;  // FP8 激活
     
     Vector<float> forward(const Vector<float>& input) {
-        // 转换输入为低精度
-        Vector<bfloat16_t> input_bf16 = cast<Vector<bfloat16_t>>(input).value();
-        
+        // 逐元素转换为低精度：cast<T> 作用于单个值，
+        // 容器的元素类型变换用显式的 map 适配器
+        Vector<bfloat16_t> input_bf16 =
+            input | map([](float v) { return cast<bfloat16_t>(v).value(); })
+                  | collect<Vector<bfloat16_t>>();
+
         // 低精度矩阵乘法（硬件加速）
         Vector<bfloat16_t> output_bf16 = matmul(input_bf16, weights);
-        
-        // 转回 float32
-        return cast<Vector<float>>(output_bf16).value();
+
+        // 转回 float32：bfloat16 → float 无损，转换不会失败
+        return output_bf16 | map([](bfloat16_t v) { return cast<float>(v).value(); })
+                           | collect<Vector<float>>();
     }
 };
 

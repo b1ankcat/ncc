@@ -617,6 +617,22 @@ struct Cache {
 };
 ```
 
+### Semaphore - 并发数限制
+
+```cpp
+Semaphore limit(100);       // 最多 100 个许可
+
+void handle(TcpStream conn) {
+    auto permit = limit.acquire();   // 无许可时让出 worker 等待
+    handle_connection(conn);
+    // permit 析构时归还许可
+}
+```
+
+`acquire()` 返回 RAII 许可对象，析构时归还；`try_acquire()` 返回
+`Optional<Permit>`，无许可时立即返回空。用于给无界的任务创建加背压——
+`TaskScope` 负责生命周期，不负责限流。
+
 ## 六、使用场景
 
 ### 场景 1：数据并行（图像处理）
@@ -636,17 +652,21 @@ void apply_filter(Image& img) {
 void http_server() {
     TaskScope scope;
     TcpListener listener("127.0.0.1:8080");
-    
+
     for (;;) {
-        TcpStream conn = listener.accept();
-        
-        // 每个连接启动一个轻量级任务
+        TcpStream conn = listener.accept();   // 让出 worker 直到有连接
+
+        // 每个连接启动一个轻量级任务；句柄立即析构，等同 detach
         scope.spawn([conn = move(conn)]{
             handle_connection(conn);
         });
     }
 }
 ```
+
+`scope` 只保留**未完成**任务的记录，已完成的任务在结束时从作用域中移除，因此
+长期运行的 accept 循环不会让作用域无界增长。需要限制并发连接数时用信号量或
+有界通道，而不是依赖作用域——作用域负责生命周期，不负责背压。
 
 ### 场景 3：Pipeline（流水线）
 

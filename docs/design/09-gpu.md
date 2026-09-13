@@ -393,6 +393,7 @@ for (size_t i = 0; i < data.size(); ++i) {
 }
 
 // GPU 计算（运行时自动迁移到 GPU）
+// 丢弃 Completion：句柄在语句结束时析构并阻塞等待，因此下一行读到的是完成后的值
 parallel<Device::Gpu>(data.size(), [view = data.view()](size_t i) {
     view[i] = view[i] * 2.0f;
 });
@@ -400,6 +401,9 @@ parallel<Device::Gpu>(data.size(), [view = data.view()](size_t i) {
 // CPU 读取（运行时自动迁移回 CPU）
 println("Result: {}", data[0]);
 ```
+
+统一内存不改变句柄语义：跨设备访问同一缓冲区仍必须等待 kernel 完成，页面迁移
+只是省去了显式的 `to_device()` / `to_host()`，不提供隐式同步。
 
 **UnifiedBuffer 特性：**
 

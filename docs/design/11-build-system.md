@@ -270,7 +270,22 @@ comp String input_url(String url, String sha256);
 
 // 把已登记输入的内容作为编译期常量暴露给普通源文件的 comp 块
 comp void embed_as_constant(String name, String content);
+
+// 用显式路径登记工具（例如来自环境变量），而非在 PATH 中查找
+comp Tool tool_at(String path, String version_requirement);
 ```
+
+### 路径与列表辅助
+
+```cpp
+comp String stem_of(String path);        // "schema/user.proto" → "user"
+comp String extension_of(String path);   // → "proto"
+comp String join_path(String a, String b);
+
+comp Vector<String> concat(Vector<String> a, Vector<String> b);
+```
+
+这些是构建脚本常用的纯函数，不访问文件系统，因此不需要登记。
 
 ### 命令与代码生成
 

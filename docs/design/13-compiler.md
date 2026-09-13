@@ -25,6 +25,8 @@ HIR (高层 IR) - 展开语法糖
     ↓
 Type Checking + Comp Execution (类型检查 + 编译期求值)
     ↓
+Coroutine Lowering (协程 → 状态机)
+    ↓
 MLIR Generation
     ↓
 ┌─────────────────────────────────────────────┐
@@ -95,11 +97,18 @@ VarDecl
 - 聚合初始化 → 字段赋值序列
 - for 循环 → while 循环
 - 运算符重载 → 函数调用
+- 范围 for → 迭代器循环（含 Generator 与 Receiver 的遍历）
 ```
 
 `match(value, handler...)` 按普通函数调用解析，绑定到库中的 comp 函数。
 穷尽检查和分发代码生成由该函数通过公开的 comp/反射能力完成；编译器不设置
 专用 match AST 节点。生成的枚举分发与用户写出的同等控制流使用相同的降低规则。
+
+**协程降低**在 HIR 之后、MLIR 生成之前进行：含 `co_yield` / `co_return` 的函数
+变换为状态机，局部变量提升到协程帧，`co_yield` 处切分基本块并记录恢复点。由于
+[没有 `co_await` 与 awaiter 协议](00-overview.md)，不需要 symmetric transfer 与
+`await_transform` 的处理，挂起点集合是封闭的（只有 `co_yield` 和函数结束）。
+帧默认堆分配；生成器为不逃逸的局部变量时允许把帧提升到调用者栈上，此优化不作承诺。
 
 ### 4. Type Checking + Comp Execution
 

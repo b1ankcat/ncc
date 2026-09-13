@@ -40,12 +40,17 @@ int main() {
 | 智能指针 | `unique_ptr<T>`、`shared_ptr<T>`、`weak_ptr<T>`、`make_unique`、`make_shared` |
 | 值容器 | `Any` |
 | 输出与格式化 | `println`、`print`、`format`、`Logger`、`log_info`/`log_warn`/`log_error`、`LogLevel` |
-| 反射 | `Info`、`^^`、`[: :]`、`name_of`、`type_of`、`fields_of`、`methods_of`、`size_of`、`alignment_of`、`offset_of`、`nonstatic_data_members_of`、`dynamic_type_of`、`get_field`、`set_field`、`invoke`、`define_aggregate`、`define_class` |
-| 类型操作 | `cast<T>`、`is<T>`、`move`、`declval`、`StorageOps` |
+| 反射：句柄与语法 | `Info`、`^^`、`[: :]` |
+| 反射：查询 | `name_of`、`type_of`、`size_of`、`alignment_of`、`offset_of`、`fields_of`、`methods_of`、`bases_of`、`nonstatic_data_members_of`、`variants_of`、`captures_of`、`capture_mode_of`、`CaptureMode` |
+| 反射：枚举作用域 | `types_of`、`functions_of`、`types_deriving_from`、`current_module` |
+| 反射：谓词 | `is_scalar`、`is_pointer`、`is_aggregate`、`is_device_view`、`derives_from`、`satisfies`、`has_annotation` |
+| 反射：运行时访问 | `dynamic_type_of`、`register_dynamic_type`、`get_field`、`set_field`、`invoke` |
+| 反射：代码生成 | `define_aggregate`、`define_class`、`data_member_spec`、`make_array_type` |
+| 类型操作 | `cast<T>`、`is<T>`、`bit_cast<T>`、`move`、`declval`、`StorageOps` |
 | 断言与诊断 | `assert`、`SourceLocation`、`expression_of` |
 | 异常 | `Exception` 及其派生层次（见[类型系统](02-types.md#标准异常层次)） |
-| 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Sender<T>`、`Receiver<T>`、`Completion`、`Completion<T>`、`Mutex<T>`、`RwLock<T>`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule`、`blocking`、`Thread`、`Duration`、`AggregateException` |
-| 惰性序列 | `Generator<T>`、管道适配器 `filter`、`map`、`take`、`for_each` |
+| 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Sender<T>`、`Receiver<T>`、`Completion`、`Completion<T>`、`Mutex<T>`、`RwLock<T>`、`Semaphore`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule`、`blocking`、`Thread`、`Duration`、`AggregateException` |
+| 惰性序列 | `Generator<T>`、管道适配器 `filter`、`map`、`take`、`for_each`、`collect<C>` |
 | 设备 | `Device`、`DeviceView<T>`、`DeviceView2D<T>`、`GpuId` |
 | 编译期查询 | `profile()`、`target_os()`、`target_arch()`、`target_triple()` |
 | 文件 | `File` |

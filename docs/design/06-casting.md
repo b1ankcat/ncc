@@ -57,6 +57,23 @@ if (is<File&>(writer)) {
 去除 `const`。这些仍遵循 C++ 指针语义；需要可写访问时，调用方必须持有可写
 指针或引用。
 
+### 指针转换规则
+
+| 源 → 目标 | 结果 |
+| --- | --- |
+| 派生类 ↔ 基类指针/引用（多态） | 运行时检查，失败返回空 `Optional` |
+| 任意 `T*` → `void*` | 总是成功 |
+| `void*` → `T*` | 成功；正确性由调用方负责（C 互操作的不透明句柄） |
+| 字节类型之间（`char`/`uint8_t`/`int8_t`/`std::byte`）的指针 | 成功；字节级重解释是明确允许的 |
+| 其他不相关类型的指针互转 | **编译期拒绝** |
+| 去除 `const` | **编译期拒绝** |
+
+字节类型指针之间的转换单独允许，因为它是 C 互操作的必要操作（把
+`const char*` 字面量交给接受 `const uint8_t*` 的接口）。其他类型双关
+（如 `float*` → `uint32_t*`）一律拒绝——需要重解释位模式时使用核心库的
+`bit_cast<T>(value)`，它要求两个类型大小相同且可平凡复制，语义明确且不产生
+别名问题。
+
 ## `concept`/`requires`：用 `comp bool` 函数替代
 
 `cast<T>` 解决的是"运行时一个值是不是某个类型"这个问题。泛型参数约束解决的
@@ -69,7 +86,7 @@ if (is<File&>(writer)) {
 // concept 定义改用 comp bool 函数
 comp bool Writable(type T) {
     return requires(T t) {
-        { t.write(declval<uint8_t*>(), size_t{}) } -> same_as<size_t>;
+        { t.write(declval<const uint8_t*>(), size_t{}) } -> same_as<size_t>;
     };
 }
 
@@ -87,4 +104,10 @@ comp void process<type T>(T& w) requires Writable<T> {
 - `cast<T>(value)` - 唯一的转换入口；值、指针和引用目标分别返回对应的 Optional，取代
   `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast`
 - `is<T>(value)` - `cast<T>(value).has_value()` 的简写，唯一的检查入口
+- `bit_cast<T>(value)` - 同大小可平凡复制类型间的位模式重解释；不是 `cast` 的
+  重载，因为它不做任何检查也不会失败，与 `cast` 的"可失败转换"语义不同
 - `comp bool` 函数 + `<>` - 泛型参数的结构性约束（编译期），取代 `concept` 关键字
+
+`cast` 与 `bit_cast` 的分工：前者转换**值**（`cast<int8_t>(300)` 失败，因为
+300 不可表示），后者重解释**位**（`bit_cast<uint32_t>(1.0f)` 得到
+`0x3F800000`）。两者都不去除 `const`，也都不检查指针寿命。
