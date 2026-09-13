@@ -537,72 +537,23 @@ comp {
 
 ### 1. 使用 RAII 包装 C 资源
 
+C 的资源句柄（`int fd`、`FILE*`、`sqlite3*`）都是可拷贝的标量，编译器无从判断
+它代表独占资源，因此必须由封装类型显式定义所有权操作：删除拷贝、实现移动并在
+移动后清空源句柄。完整示例见
+[内存管理的 File 类](03-memory.md#构造函数raii-资源获取)。
+
 ```cpp
-// ✓ 好：RAII 包装
-class File {
-    int fd_ = -1;
-    
-public:
-    explicit File(const char* path) : fd_(open(path, O_RDONLY)) {
-        if (fd_ < 0) {
-            throw IOException("Failed to open file");
-        }
-    }
-    
-    ~File() noexcept {
-        if (fd_ >= 0) close(fd_);
-    }
-    
-    // 禁止拷贝
-    File(const File&) = delete;
-    File& operator=(const File&) = delete;
-
-    File(File&& other) noexcept : fd_(other.fd_) {
-        other.fd_ = -1;
-    }
-
-    File& operator=(File&& other) noexcept {
-        if (this != &other) {
-            if (fd_ >= 0) close(fd_);
-            fd_ = other.fd_;
-            other.fd_ = -1;
-        }
-        return *this;
-    }
-};
-
-// ✗ 差：手动管理
+// ✗ 差：手动管理，早退和异常路径上都会漏掉 close
 int fd = open("file.txt", O_RDONLY);
 // ... 使用
-close(fd);  // 容易忘记
+close(fd);
 ```
-
-拷贝与移动按 C++ 规则由资源封装类型定义；裸句柄不会自动禁用拷贝。
-移动后源 File 为空句柄，移动赋值释放目标已有句柄；清理期间的关闭错误处理
-边界与 [内存管理](03-memory.md) 中的 File 示例一致。
 
 ### 2. 不透明句柄模式
 
-```cpp
-// NCC 库内部
-struct Context {
-    Vector<Data> internal_data;
-    // ... 复杂的 NCC 类型
-};
-
-// 暴露给 C 的 API
-export extern "C" {
-    void* create_context() {
-        return new Context();
-    }
-    
-    void destroy_context(void* ctx) {
-        delete cast<Context*>(ctx).value();
-    }
-    
-    // C 代码只操作不透明指针，不访问内部结构
-}
-```
+含 NCC 核心类型的结构体不能跨 C ABI 传递（布局不兼容），因此以 `void*` 句柄
+暴露，C 侧只持有指针、不访问内部结构。示例见
+[暴露 NCC 接口给 C](#使用-export-extern-c)。
 
 ### 3. 错误处理转换
 
@@ -683,17 +634,6 @@ public:
 };
 ```
 
-**不推荐理由：**
-- 需要维护额外的 C 包装层
-- 增加编译复杂度
-- 失去类型安全（通过 void* 传递）
+代价是每个要用的 C++ 接口都需要手写一层包装，且类型信息在 `void*` 边界上丢失。
+模板密集的库（Eigen、Boost.Hana）尤其难包，因为实例化必须在 C++ 侧固定下来。
 
-**推荐方案：**
-- 优先使用原生 NCC 库
-- 或者使用纯 C 的替代品
-
-## 下一步
-
-- 查看 [11-build-system.md](11-build-system.md) 了解如何链接 C 库
-- 查看 [03-memory.md](03-memory.md) 了解内存管理
-- 查看 [14-performance.md](14-performance.md) 了解性能优化

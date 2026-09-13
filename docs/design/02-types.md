@@ -229,27 +229,8 @@ int32_t x = maybe.value_or(0);
 要求调用方已确认 `has_value()`。`Optional<reference_wrapper<T>>`（`cast<T&>` 的
 返回类型）用 `->` 取得 `reference_wrapper`，再用 `.get()` 取得被引用对象。
 
-**Optional 不是错误处理机制**，而是表示"值可能不存在"的类型：
-
-```cpp
-// ✅ 使用 Optional：查找操作（找不到不是错误）
-Optional<User> find_user(uint64_t id);
-
-if (auto user = find_user(123)) {
-    println("Found: {}", user->name);
-} else {
-    println("User not found");  // 正常情况，不是错误
-}
-
-// ✅ 使用 Optional：可选配置
-struct Config {
-    String host;
-    Optional<uint16_t> port;  // 未设置时使用默认值
-};
-
-// ❌ 不要用 Optional 处理错误：
-// 文件打开失败应该抛出异常，而不是返回 Optional<File>
-```
+`Optional` 表示"值可能不存在"，不是错误处理机制——错误用异常，见
+[何时使用异常 vs Optional](#何时使用异常-vs-optional)。
 
 ## 断言：`assert`
 

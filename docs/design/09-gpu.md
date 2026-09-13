@@ -465,7 +465,3 @@ grid 大小按 `ceil(n / block_size)` 计算；`n == 0` 时不启动 kernel。�
 后端目标在编译期由 `--target` 确定；实际设备和驱动在运行时检测。没有可用 GPU
 时，开发者选择显式 CPU 回退或在执行 GPU 操作时抛出 `GpuUnavailable`。
 
-## 下一步
-
-- 查看 [08-concurrency.md](08-concurrency.md) 了解任务并发
-- 查看 [13-compiler.md](13-compiler.md) 了解编译器架构

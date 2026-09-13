@@ -327,20 +327,9 @@ CUDA Runtime          或  ROCm Runtime
 
 ## 优化 Pass
 
-### MLIR 提供的标准优化
-
-```
-1. 内联优化（Inlining）
-2. 常量传播（Constant Propagation）
-3. 死代码消除（Dead Code Elimination）
-4. 循环优化：
-   - Loop Fusion（循环融合）
-   - Loop Tiling（循环分块）
-   - Loop Vectorization（向量化）
-5. 内存优化：
-   - Buffer Allocation（缓冲区分配）
-   - Memory Promotion（内存提升）
-```
+标准优化（内联、常量传播、死代码消除、循环与内存优化、向量化）直接复用
+MLIR 与 LLVM 的既有 Pass，清单见
+[14-performance.md](14-performance.md#标准优化-pass)。下面只列 NCC 自己引入的。
 
 ### NCC 特定优化
 
@@ -370,17 +359,10 @@ src/models.ncc  → target/.ccc-cache/models.mlir → target/.ccc-cache/models.o
 只重新编译修改过的模块
 ```
 
-**缓存键计算：**
-
-```
-cache_key = sha256(
-    source_file_hash,
-    compiler_version,
-    optimization_flags,
-    target_triple,
-    dependency_hashes
-)
-```
+缓存分两级：**模块级**键由源文件哈希、编译器版本、优化标志、目标三元组和所依赖
+模块的哈希构成；**包级**键还要计入 feature、锁文件与构建脚本输入，完整清单见
+[10-packages.md](10-packages.md#全局缓存结构)。模块级缓存位于项目内，包级缓存
+跨项目共享。
 
 ## 编译选项
 
@@ -429,23 +411,6 @@ ccc build --mlir-print-ir-module-scope --mlir-print-local-scope
 
 最终生成 DWARF debug info，支持 gdb/lldb 调试。
 
-## 性能目标
+编译速度与生成代码性能的目标见
+[14-performance.md](14-performance.md#验收目标)。
 
-- **编译速度**：< 1秒/1000行代码（增量编译）
-- **生成代码性能**：与手写 C++/CUDA 相当（LLVM 优化级别 -O3）
-- **GPU kernel 启动开销**：< 10μs
-
-## 与其他编译器对比
-
-| 编译器 | 后端 | CPU 支持 | GPU 支持 | 增量编译 |
-|--------|------|---------|---------|---------|
-| Rust | LLVM | ✅ | ❌ | ✅ |
-| Swift | LLVM | ✅ | ❌ | ✅ |
-| Julia | LLVM | ✅ | 部分 | ❌ |
-| Mojo | MLIR | ✅ | ✅ | ✅ |
-| **NCC** | **MLIR** | **✅** | **✅** | **✅** |
-
-## 下一步
-
-- 查看 [09-gpu.md](09-gpu.md) 了解 GPU 编译细节
-- 查看 [11-build-system.md](11-build-system.md) 了解构建系统

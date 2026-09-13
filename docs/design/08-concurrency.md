@@ -899,27 +899,16 @@ do_other_work();
 done.wait();
 ```
 
-## 九、对比总结
+## 九、按场景选择 API
 
-| 场景 | 解决方案 | API |
-|------|---------|-----|
-| CPU 数据并行 | 数据并行 API | `parallel<Device::Cpu>` |
-| GPU 数据并行 | 参见 GPU 文档 | `parallel<Device::Gpu>` |
-| 任务并发 | 结构化任务作用域 | `TaskScope::spawn` + `Task<T>` |
-| 任务间通信 | 引用计数通道 | `Sender<T>` / `Receiver<T>` |
-| 惰性序列 | 生成器协程 | `Generator<T>` + `co_yield` |
-| 阻塞的 C 调用 | 派发到阻塞线程池 | `blocking()` / `[[ncc::blocking]]` |
-| 同步原语 | 标准 C++ | `Mutex`、`Atomic`、`RwLock` |
+| 场景 | API |
+|------|-----|
+| CPU / GPU 数据并行 | `parallel<Device::Cpu>` / `parallel<Device::Gpu>` |
+| 任务并发 | `TaskScope::spawn` → `Task<T>` |
+| 任务间通信 | `Sender<T>` / `Receiver<T>` |
+| 惰性序列 | `Generator<T>` + `co_yield` |
+| 阻塞的 C 调用 | `blocking()` / `[[ncc::blocking]]` |
+| 计数与标志 | `Atomic<T>` |
+| 多字段不变量 | `Mutex<T>` / `RwLock<T>` |
+| 限制并发数 | `Semaphore` |
 
-**核心优势**：
-- ✅ 统一的 CPU/GPU API（`parallel` + `Device` 参数）
-- ✅ 结构化轻量级任务系统，只有一个执行单元入口
-- ✅ 关闭时机由所有权决定，不依赖人工协调
-- ✅ 无新增关键字（全部库 + comp 函数）
-- ✅ 零成本抽象（只为选定策略生成所需代码）
-
-## 下一步
-
-- 查看 [09-gpu.md](09-gpu.md) 了解 GPU 并行与异构计算
-- 查看 [13-compiler.md](13-compiler.md) 了解编译器架构
-- 查看 [15-examples.md](15-examples.md) 查看完整的并发示例

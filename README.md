@@ -49,13 +49,16 @@ int main() {
 
 ### 核心简化
 
-| 特性 | C++ | NCC |
+| | C++ | NCC |
 |------|-----|-----|
 | 代码组织 | 头文件 + namespace + 模块 | **只有模块** |
-| 编译期计算 | constexpr/consteval/template | **`comp` 统一** |
-| 类型转换 | 4 种 cast | **`cast<T>` 一个** |
-| 泛型 | template<typename T> | **`comp T f<type T>(T value)`** |
+| 编译期计算 | constexpr / consteval / template | **`comp` 统一** |
+| 编译期断言 | static_assert（消息只能是字面量） | **`comp_assert` / `compile_error`，消息可格式化** |
+| 文本替换 | 预处理器 | **删除，能力由 `comp` 承担** |
+| 类型转换 | 4 种 cast | **`cast<T>` 一个，语义由目标类型决定** |
+| 泛型 | `template<typename T>` | **`comp T f<type T>(T value)`** |
 | 类型约束 | concept | **`comp bool` 函数** |
+| 异步 | 协程 + 执行器 | **绿色线程；协程只用于惰性序列** |
 
 ## 快速开始
 
@@ -96,19 +99,20 @@ ccc run
 
 ## 与其他语言的对比
 
-| 特性 | C++ | Rust | Zig | NCC |
+| | C++ | Rust | Zig | NCC |
 |------|-----|------|-----|-----|
-| 零成本抽象 | ✓ | ✓ | ✓ | ✓ |
-| 内存安全 | 否 | 是（严格） | 否 | 否（与 C++ 一致） |
-| 学习曲线 | 陡峭 | 陡峭 | 中等 | 中等 |
-| 编译速度 | 慢 | 慢 | 快 | 快 |
-| 包管理 | 无标准 | Cargo | 内置 | 内置（类 Cargo） |
-| 虚函数 | ✓ | Trait Objects | 手动 | ✓（保留） |
+| 编译期内存安全 | 无 | 借用检查 | 无 | 无（与 C++ 一致） |
+| 多态 | 虚表 | Trait Objects | 手动 vtable | 虚表（沿用 C++） |
+| 元编程 | 模板 + constexpr | 宏 | comptime | `comp` + 反射 |
+| 包管理 | 无标准 | Cargo | 内置 | 内置 |
+| 语法来源 | 自身演进 | 自成体系 | 自成体系 | C++26 子集 |
 
 **选择指南**：
-- 需要内存安全 → **Rust**
-- 需要完整 C++ 生态 → **C++26**
-- 需要现代语法 + C ABI 互操作 → **NCC**
+- 需要编译期内存安全保证 → **Rust**
+- 需要完整 C++ 生态与 C++ 库直接互操作 → **C++26**
+- 需要 C++ 语义 + 统一元编程 + C ABI 互操作 → **NCC**
+
+详细取舍见 [16-comparison.md](docs/design/16-comparison.md)。
 
 ## 项目状态
 
