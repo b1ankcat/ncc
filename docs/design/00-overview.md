@@ -79,6 +79,14 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
   异步操作完成前视图的所有者必须保持有效，完成句柄通过 `wait()` 明确同步。
 - **结构化并发**：所有任务属于 `TaskScope`，作用域结束前必须完成、取消或显式
   `detach()` 转移；`parallel`、`TaskScope::spawn` 和 `Channel` 都遵循同一生命周期规则。
+  创建执行单元只有 `TaskScope::spawn` 一个入口，不提供 `Thread::spawn`；需要真正的
+  OS 线程时显式经由 `import pthread` 调用 C API，明确脱离调度器。
+- **通道所有权**：`Channel<T>::create()` 返回 `Sender<T>` / `Receiver<T>` 一对，
+  `Sender` 可 `clone()`；最后一个 `Sender` 析构时通道自动关闭，不依赖人工协调
+  关闭时机。`recv()` 返回 `Optional<T>`，通道关闭且排空后为空值。
+- **异步句柄不可静默丢弃**：`Completion` / `Completion<T>` 标注 `[[nodiscard]]`，
+  析构时阻塞等待操作完成——丢弃返回值退化为同步执行，语义正确但失去并行收益。
+  `Task<T>` 不同：它有 `TaskScope` 兜底，析构等同 `detach()`，作用域结束时仍会等待。
 - **GPU 捕获边界**：GPU kernel 只接受设备可传输值；标量、按值捕获的 `DeviceView<T>`
   和由它们组成的聚合类型可传输，裸指针、引用、`this`、CPU 容器和未知地址空间
   类型默认拒绝。该检查只约束 GPU 调用边界，不是通用借用检查。
@@ -100,6 +108,22 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
 - **`template` 关键字删除**：所有泛型定义改用 `comp` 类型生成函数或泛型声明，通过
   `<>` 语法调用时触发编译期代码生成。例如 `Vector<int32_t>` 等价于编译期调用
   `Vector(^^int32_t)`，其中 `Vector` 是一个返回类型的 `comp` 函数。
+- **`co_await` 与 awaiter 协议删除**：保留 `co_yield` / `co_return` 用于惰性
+  序列，删除 `co_await`、`await_ready` / `await_suspend` / `await_resume`、
+  `await_transform` 以及用户可见的 `initial_suspend` / `final_suspend`。
+  异步并发由绿色线程（`TaskScope`）承担，协程只承担惰性序列；语言层面无法用
+  协程搭建第二套异步机制。详见 [并发](08-concurrency.md#三惰性序列生成器协程)。
+- **预处理器整体删除**：`#include`、`#define`、`#ifdef`、`#pragma`、`#` 与 `##`
+  全部移除。各项能力由既有机制承担：模块替代 `#include`，`comp` 常量与 `comp`
+  函数替代宏，`comp` 块内的 `if` 配合 `profile()` / `target_os()` 替代条件编译，
+  反射替代字符串化与拼接。`assert` 是核心库的 `comp` 函数而非宏；`static_assert`
+  是关键字，保留。
+- **attribute `[[...]]` 保留**，包含实现定义的 `[[ncc::...]]`。判据：**attribute
+  必须可忽略**——删除程序中所有 attribute 后，程序必须仍然合法且语义等价（允许
+  性能与诊断变差）。`[[...]]` 的语法形式是 C++11 起的既有产物，标准要求实现忽略
+  未知 attribute，因此实现定义的 attribute 位于标准预留的位置，不构成第四种语法
+  例外。通不过该判据的构造是语言扩展，必须按语法例外重新审批，不得以 attribute
+  形式引入。非标准 attribute 一律加 `ncc::` 前缀以便与 C++26 既有 attribute 区分。
 
 ## 设计原则
 

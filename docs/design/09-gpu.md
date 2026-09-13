@@ -74,8 +74,12 @@ m(i, j) = 0.0f;
 Vector 契约决定。`DeviceView<T>` 只包含设备地址、长度和设备标识；
 `DeviceView2D<T>` 额外携带 rows、cols 与行主序 stride。按值捕获只复制这些
 描述信息。两者都不延长所有者的生命周期，提交的异步操作完成前所有者必须保持
-有效；`parallel` 返回的完成句柄必须 `wait()` 后才能释放所有者。CPU 指针和
-CPU Vector 不能转成 GPU 视图。
+有效。CPU 指针和 CPU Vector 不能转成 GPU 视图。
+
+`parallel` 与 `to_device_async` / `to_host_async` 返回的都是
+[`Completion` / `Completion<T>`](08-concurrency.md#异步句柄对照)：标注
+`[[nodiscard]]`，且**析构时阻塞等待完成**。因此丢弃句柄不会产生悬空视图——它退化
+为同步执行。只有把句柄移动到比所有者更长的生命周期中时，才需要自己保证所有者存活。
 
 ## 内存迁移 API
 
@@ -86,7 +90,7 @@ CPU Vector 不能转成 GPU 视图。
 Vector<float, Device::Gpu> to_device() const;
 
 // 异步迁移
-Future<Vector<float, Device::Gpu>> to_device_async() const;
+Completion<Vector<float, Device::Gpu>> to_device_async() const;
 
 // 指定目标 GPU
 Vector<float, Device::Gpu> to_device(GpuId gpu_id) const;
@@ -111,13 +115,13 @@ Vector<float, Device::Gpu> gpu_data2 = cpu_data.to_device(GpuId{1});
 Vector<float> cpu_data(1000000);
 
 // 异步迁移（不阻塞）
-auto future = cpu_data.to_device_async();
+auto pending = cpu_data.to_device_async();
 
 // 可以继续执行其他 CPU 工作
 do_cpu_work();
 
 // 等待 GPU 拷贝完成
-Vector<float, Device::Gpu> gpu_data = future.get();
+Vector<float, Device::Gpu> gpu_data = pending.get();
 
 // 或者使用简化语法
 Vector<float, Device::Gpu> gpu_data2 = cpu_data.to_device(GpuId{0}, true);
@@ -137,7 +141,7 @@ Vector<float, Device::Gpu> gpu_data2 = cpu_data.to_device(GpuId{0}, true);
 Vector<T, Device::Cpu> to_host() const;
 
 // 异步读回
-Future<Vector<T, Device::Cpu>> to_host_async() const;
+Completion<Vector<T, Device::Cpu>> to_host_async() const;
 ```
 
 **示例：**
@@ -153,9 +157,9 @@ Vector<float, Device::Gpu> gpu_data(1000);
 Vector<float> cpu_result = gpu_data.to_host();
 
 // 异步读回
-auto future = gpu_data.to_host_async();
+auto pending = gpu_data.to_host_async();
 do_other_work();
-Vector<float> cpu_result2 = future.get();
+Vector<float> cpu_result2 = pending.get();
 ```
 
 **语义规格：**

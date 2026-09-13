@@ -43,7 +43,8 @@ int main() {
 | 反射 | `Info`、`^^`、`[: :]`、`name_of`、`type_of`、`fields_of`、`methods_of`、`size_of`、`alignment_of`、`offset_of`、`nonstatic_data_members_of`、`dynamic_type_of`、`get_field`、`set_field`、`invoke`、`define_aggregate`、`define_class` |
 | 类型操作 | `cast<T>`、`is<T>`、`move`、`declval`、`StorageOps` |
 | 异常 | `Exception` 及其派生层次（见[类型系统](02-types.md#标准异常层次)） |
-| 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Mutex<T>`、`RwLock<T>`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule` |
+| 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Sender<T>`、`Receiver<T>`、`Completion`、`Completion<T>`、`Mutex<T>`、`RwLock<T>`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule`、`blocking`、`Thread`、`Duration`、`AggregateException` |
+| 惰性序列 | `Generator<T>`、管道适配器 `filter`、`map`、`take`、`for_each` |
 | 设备 | `Device`、`DeviceView<T>`、`DeviceView2D<T>`、`GpuId` |
 | 编译期查询 | `profile()`、`target_os()`、`target_arch()`、`target_triple()` |
 | 文件 | `File` |
