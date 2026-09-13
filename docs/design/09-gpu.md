@@ -183,9 +183,8 @@ void parallel<Device device>(size_t n, auto func) {
             auto capture_mode = capture_mode_of(capture);
 
             if (!gpu_capture_safe(capture_type, capture_mode)) {
-                static_assert(false,
-                    "GPU 捕获的值不是设备可传输类型：{}",
-                    name_of(capture_type));
+                compile_error("GPU 捕获的值不是设备可传输类型：{}",
+                              name_of(capture_type));
             }
         }
     }

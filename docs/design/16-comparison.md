@@ -31,7 +31,7 @@
 - ✅ 删除头文件/namespace/std 前缀，只保留模块
 - ✅ 统一泛型机制：`comp` 函数 + `<>` 替代 `template`
 - ✅ 统一类型转换：`cast<T>` 替代四个 cast
-- ✅ 统一编译期计算：`comp` 替代 constexpr/consteval
+- ✅ 统一编译期计算：`comp` 替代 constexpr/consteval/static_assert
 - ✅ 内置包管理（类 Cargo）
 - ✅ 反射作为一等特性
 - ✅ 更快的编译速度（全局缓存）

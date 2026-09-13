@@ -118,8 +118,11 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
   全部移除。各项能力由既有机制承担：模块替代 `#include`，`comp` 常量与 `comp`
   函数替代宏，`comp` 块内的 `if` 配合 `profile()` / `target_os()` 替代条件编译，
   反射替代字符串化与拼接。`assert` 是核心库的普通运行时函数（源码位置由
-  `SourceLocation::current()` 默认实参在调用处取得），不是宏；`static_assert`
-  是关键字，保留。
+  `SourceLocation::current()` 默认实参在调用处取得），不是宏。
+- **`static_assert` 关键字删除**：编译期断言改用核心库的 `comp` 函数
+  `comp_assert(cond, message)` 与 `compile_error(format, ...)`。理由是消息可以
+  用统一的格式化引擎拼入类型名等信息（`static_assert` 只接受字符串字面量），
+  且条件的求值规则与 `comp` 一致，不必单独规定何谓常量表达式。
 - **attribute `[[...]]` 保留**，包含实现定义的 `[[ncc::...]]`。判据：**attribute
   必须可忽略**——删除程序中所有 attribute 后，程序必须仍然合法且语义等价（允许
   性能与诊断变差）。`[[...]]` 的语法形式是 C++11 起的既有产物，标准要求实现忽略

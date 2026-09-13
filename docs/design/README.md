@@ -18,7 +18,7 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[00-overview.md](00-overview.md)** - 核心理念与设计原则
   - 语法基线：C++26 只删不加
   - 唯三例外：`comp`、tagged enum、扩展 `import`
-  - 主要删除项：头文件、`namespace`、`template`、`concept`、四种 cast、
+  - 主要删除项：头文件、`namespace`、`template`、`concept`、`static_assert`、四种 cast、
     预处理器、`co_await` 与 awaiter 协议
   - attribute 保留及"必须可忽略"判据
   - 设计原则与哲学

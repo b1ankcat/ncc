@@ -307,7 +307,51 @@ check(^^(account.balance >= amount));
 **与优化级别解耦**：release 构建默认关闭断言，但可以显式开启，不必为了保留断言而
 放弃优化。
 
-`static_assert` 是关键字而非宏，保留不变，用于编译期条件检查。
+### 编译期断言：删除 `static_assert` 关键字
+
+`static_assert` 是 C++ 的关键字，但它解决的问题——"编译期条件不满足时报错"——
+已经由 `comp` 完全覆盖，因此**删除该关键字**，改用核心库的 `comp` 函数：
+
+```cpp
+comp void comp_assert(bool condition, String message);
+
+// 无条件报错，用于不可达的分支
+[[noreturn]] comp void compile_error(String format, auto... args);
+```
+
+```cpp
+comp type Vector(type T) {
+    comp_assert(size_of(^^T) > 0, "元素类型不能是不完整类型");
+    // ...
+}
+
+comp bool check_capture(type T) {
+    if (!is_device_transferable(T)) {
+        compile_error("不是设备可传输类型：{}", name_of(^^T));
+    }
+    return true;
+}
+```
+
+**为什么删除关键字而非保留**：
+
+- **消息可格式化**。`static_assert` 只接受字符串字面量，拼不进类型名；
+  `compile_error` 与 `println` / `format` 共用[同一套格式化引擎](01-modules.md#格式化println-format)，
+  可以报告具体是哪个类型、哪个字段不满足条件。这是实践中最需要的能力。
+- **条件由 `comp` 求值，规则统一**。`comp_assert` 的条件就是普通的 `comp` 表达式，
+  不需要为 `static_assert` 单独规定"什么算常量表达式"。
+- **符合"一个问题一个解法"**。编译期计算的入口只有 `comp`，报错也不该例外。
+
+在 `comp` 上下文中，`throw` 同样使编译失败并产生诊断（见[概览](00-overview.md)）。
+三者的分工：
+
+| 形式 | 用途 |
+| --- | --- |
+| `comp_assert(cond, msg)` | 检查编译期条件，不满足则报错 |
+| `compile_error(fmt, ...)` | 无条件报错，用于本不该到达的分支 |
+| `comp` 中 `throw` | 编译期求值过程中的异常，诊断含异常信息与位置 |
+
+运行时断言用 [`assert`](#断言assert)，那是普通函数；编译期用这里的 `comp` 函数。
 
 ## 错误处理机制
 
