@@ -27,11 +27,6 @@ comp struct Config {
 C++ 的 `类型 参数名` 写法；没有独立的 `fn` 关键字。类型参数列表属于总纲
 已批准的 comp 扩展。求值与实例化的阶段划分见[求值阶段与实例化](#求值阶段与实例化)。
 
-下面的 `Vector` 只演示 `comp type` 的调用形式和布局生成，**不是核心库 Vector
-的真实定义**：真实 Vector 用 `define_class` + `StorageOps` 生成，并须满足
-[通用容器原语](03-memory.md#通用容器原语)与
-[define_class](04-reflection.md#完整类定义define_class-api)规定的完整生命周期契约。
-
 ```cpp
 // 泛型类型定义（仅演示布局生成，省略全部生命周期操作）
 comp type Vector(type T) {
@@ -82,10 +77,6 @@ unique_ptr<File> q = make_unique<File>("out.txt");
 // make_unique<File> 是编译期调用 make_unique(^^File)，得到一个普通函数；
 // ("out.txt") 是对该函数的运行时调用，参数原样转发给 File 的构造函数
 ```
-
-工厂的两段调用体现了 `<>` 和 `()` 的分工：`<>` 里的类型参数在编译期消耗，
-`()` 里的构造参数在运行时传递。这与 `Vector<T>` 只有编译期一段不同——
-`make_unique<T>` 的生成结果是函数而不是类型。
 
 **`<>` vs `()` 对比**：
 
@@ -284,34 +275,6 @@ comp {
 }
 ```
 
-## `comp` 块内部不需要重复标注 `comp`
-
-已经身处 `comp { ... }` 块或者 `comp` 函数体内部的代码，本身就在编译期
-上下文里执行——块/函数一级的 `comp` 已经声明过"这里是编译期"，块内部再
-给每个局部变量、每个调用的函数、每个用到的类型重复加一次 `comp` 是多余
-的重复标注。`comp` 只标在**边界**上（一个 `comp` 函数、一个 `comp` 类型、
-一个裸 `comp` 块的起始处），进入边界之后就是普通语法：
-
-```cpp
-comp {
-    // x、Local、helper 都不需要标 comp——已经在 comp 块内部，
-    // 编译器知道这整块都在编译期求值
-    int32_t x = 10 + 20;
-
-    struct Local {
-        int32_t a;
-        int32_t b;
-    };
-    Local l{x, x * 2};
-
-    auto helper = [](int32_t v) { return v * v; };
-    println("{}", helper(l.a));
-}
-```
-
-同理，`comp` 函数体内部调用的其他函数、定义的局部类型，只要不逃逸到运行时
-上下文，都不需要单独标 `comp`——是否处于编译期由包住它的最近一层 `comp`
-边界决定，不是逐个符号累加的属性。
 
 ## `comp` 条件编译
 

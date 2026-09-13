@@ -54,9 +54,6 @@ Optional<Any> invoke(const void* object, TypeInfo method, Vector<Any> arguments)
 
 ### `Any`：运行时值容器
 
-`get_field` 和 `invoke` 处理的类型只有运行时才确定，因此用核心库的 `Any`
-承载值。`Any` 持有一个类型擦除的值及其 `TypeInfo`：
-
 ```cpp
 class Any {
 public:
@@ -70,10 +67,6 @@ public:
 // 取出值：类型不匹配时返回空 Optional，不抛异常、不复制失败的对象
 comp Optional<T> cast<type T>(const Any& value);
 ```
-
-`Any` 按值拥有其内容，拷贝语义取决于被持有类型的拷贝能力；不可拷贝的类型
-只能移动进出 `Any`。从 `Any` 取值统一使用已有的 `cast<T>`，不引入第二套
-取值 API。
 
 `^^T` 得到编译期 `TypeInfo`，可用于 `splice` 和代码生成；`dynamic_type_of` 得到
 运行时 `TypeInfo`，可用于查询和访问，但不能用于 `splice`、定义新类型或生成新方法。

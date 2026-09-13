@@ -262,7 +262,7 @@ void withdraw(Account& account, int64_t amount) {
 
 ```cpp
 // 接受表达式的反射句柄，在编译期取其文本与结构，生成运行时检查
-comp void check(Info expression);
+comp void check(ExprInfo expression);
 ```
 
 ```cpp
@@ -275,14 +275,10 @@ check(^^(account.balance >= amount));
 //   right = 120
 ```
 
-`check` 是 `comp` 函数，但它**生成**的是运行时代码：编译期从 `Info` 取出表达式文本
+`check` 是 `comp` 函数，但它**生成**的是运行时代码：编译期从 `ExprInfo` 取出表达式文本
 与左右操作数，splice 回去构成运行时比较，失败时报告两侧的值。这与 `comp` 的既有
 规则一致——`comp` 在编译期执行并产出运行时代码，而不是把运行时判断提前。
 
-> `^^` 作用于表达式而非类型，要求反射能提供表达式级的 `Info`。当前
-> [反射章](04-reflection.md)只规定了类型、字段、方法与捕获的反射；表达式反射的
-> 具体能力边界待反射规范补充，因此 `check` 标为**待确认**。`assert` 不依赖该能力，
-> 可独立成立。
 
 报告子表达式的值是相对 C 宏的实际优势。两者都由独立的 `assertions` 构建配置项控制，
 **与优化级别解耦**：release 构建默认关闭断言，但可以显式开启，不必为了保留断言而
