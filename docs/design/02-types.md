@@ -251,16 +251,17 @@ struct Config {
 // 文件打开失败应该抛出异常，而不是返回 Optional<File>
 ```
 
-## 断言：`assert` 是 `comp` 函数
+## 断言：`assert`
 
-预处理器整体删除（见[概览](00-overview.md)），因此 `assert` 不是宏，而是核心库的
-`comp` 函数。它靠编译期参数取得表达式文本与源码位置：
+预处理器整体删除（见[概览](00-overview.md)），因此 `assert` 不是宏。它是一个
+**普通运行时函数**——条件的真假只有运行时才知道——但源码位置由编译期默认实参提供：
 
 ```cpp
-comp void assert(bool condition,
-                 String expression = expression_of(condition),
-                 SourceLocation location = SourceLocation::current());
+void assert(bool condition, SourceLocation location = SourceLocation::current());
 ```
+
+`SourceLocation::current()` 是 `comp` 函数，作为默认实参在**调用处**求值，因此
+拿到的是调用者的位置而非 `assert` 自身的位置。这是 C++20 已有的机制，不需要宏。
 
 ```cpp
 void withdraw(Account& account, int64_t amount) {
@@ -269,16 +270,42 @@ void withdraw(Account& account, int64_t amount) {
     // ...
 }
 
-// 失败时的诊断包含表达式文本、位置与子表达式的值：
-// assertion failed: account.balance >= amount
-//   at bank.ncc:12:5
-//   account.balance = 50
-//   amount = 120
+// 失败时的诊断：
+// assertion failed at bank.ncc:12:5
 ```
 
-报告子表达式的值是 `comp` 版本相对宏的实际优势——C 的 `assert` 只能打印表达式
-文本。断言是否生成由独立的 `assertions` 构建配置项控制，**与优化级别解耦**：
-release 构建默认关闭断言，但可以显式开启，不必为了保留断言而放弃优化。
+### 需要表达式文本时反射表达式
+
+上面的形式拿不到表达式文本——参数已经求值成 `bool`，源文本不在其中。需要更丰富的
+诊断时把表达式**反射**后传入，用已有的 `^^` 与 splice，不引入新的参数种类：
+
+```cpp
+// 接受表达式的反射句柄，在编译期取其文本与结构，生成运行时检查
+comp void check(Info expression);
+```
+
+```cpp
+check(^^(account.balance >= amount));
+
+// 生成的诊断包含表达式文本与两侧的值：
+// assertion failed: account.balance >= amount
+//   at bank.ncc:12:5
+//   left  = 50
+//   right = 120
+```
+
+`check` 是 `comp` 函数，但它**生成**的是运行时代码：编译期从 `Info` 取出表达式文本
+与左右操作数，splice 回去构成运行时比较，失败时报告两侧的值。这与 `comp` 的既有
+规则一致——`comp` 在编译期执行并产出运行时代码，而不是把运行时判断提前。
+
+> `^^` 作用于表达式而非类型，要求反射能提供表达式级的 `Info`。当前
+> [反射章](04-reflection.md)只规定了类型、字段、方法与捕获的反射；表达式反射的
+> 具体能力边界待反射规范补充，因此 `check` 标为**待确认**。`assert` 不依赖该能力，
+> 可独立成立。
+
+报告子表达式的值是相对 C 宏的实际优势。两者都由独立的 `assertions` 构建配置项控制，
+**与优化级别解耦**：release 构建默认关闭断言，但可以显式开启，不必为了保留断言而
+放弃优化。
 
 `static_assert` 是关键字而非宏，保留不变，用于编译期条件检查。
 
@@ -564,8 +591,8 @@ comp/反射能力检查全部变体并生成分发代码，用户可实现同等
 - 普通泛型 lambda 可以作为兜底处理函数，不引入专用通配符或分支语法。
 
 下例使用运行时枚举：穷尽检查和分发代码生成在编译期完成，选中的处理函数
-在运行时执行。这里只确定调用契约；通用 comp 求值阶段与反射展开规则仍待
-审查第 3、4 项统一定稿，不给 `match` 单独设置阶段例外。
+在运行时执行。这里只确定调用契约；通用的 comp 求值阶段与反射展开规则
+[尚未定稿](00-overview.md#文档结构)，但不给 `match` 单独设置阶段例外。
 
 ```cpp
 // 普通函数调用，也可以只执行操作、不返回值

@@ -156,9 +156,8 @@ comp void process<type T>(T& w) requires Writable<T> {
 | `T&` | 借用，不复制不移动 | `Optional<reference_wrapper<T>>` |
 | `Bits<T>` | 位模式重解释，大小与平凡性在编译期检查 | `Optional<T>` |
 
-取代 `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast` 四个关键字，
-且没有第二个转换函数——位重解释通过目标类型 `Bits<T>` 表达，而不是另立
-`bit_cast`。所有形式都不去除 `const`，也都不检查指针寿命。
+取代 `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast` 四个关键字。
+所有形式都不去除 `const`，也都不检查指针寿命。
 
 - `is<T>(value)` - `cast<T>(value).has_value()` 的简写，唯一的检查入口
 - `comp bool` 函数 + `<>` - 泛型参数的结构性约束（编译期），取代 `concept` 关键字
