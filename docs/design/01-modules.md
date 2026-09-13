@@ -46,7 +46,7 @@ int main() {
 | 反射：谓词 | `is_scalar`、`is_pointer`、`is_aggregate`、`is_device_view`、`derives_from`、`satisfies`、`has_annotation` |
 | 反射：运行时访问 | `dynamic_type_of`、`register_dynamic_type`、`get_field`、`set_field`、`invoke` |
 | 反射：代码生成 | `define_aggregate`、`define_class`、`data_member_spec`、`make_array_type` |
-| 类型操作 | `cast<T>`、`is<T>`、`bit_cast<T>`、`move`、`declval`、`StorageOps` |
+| 类型操作 | `cast<T>`、`is<T>`、`Bits<T>`（仅作 `cast` 目标）、`move`、`declval`、`StorageOps` |
 | 断言与诊断 | `assert`、`SourceLocation`、`expression_of` |
 | 异常 | `Exception` 及其派生层次（见[类型系统](02-types.md#标准异常层次)） |
 | 并发 | `TaskScope`、`Task<T>`、`Channel<T>`、`Sender<T>`、`Receiver<T>`、`Completion`、`Completion<T>`、`Mutex<T>`、`RwLock<T>`、`Semaphore`、`Atomic<T>`、`MemoryOrder`、`parallel`、`reduce`、`Schedule`、`blocking`、`Thread`、`Duration`、`AggregateException` |

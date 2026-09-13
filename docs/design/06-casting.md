@@ -8,7 +8,9 @@
 - 目标是值类型：返回 `Optional<T>`，执行定义明确的值转换；
 - 目标是 `T*`：返回 `Optional<T*>`，成功时只返回指针，不转移所有权；
 - 目标是 `T&`：返回 `Optional<reference_wrapper<T>>`，成功时借用原对象；
-- 目标是基类/派生类指针或引用：仅对多态对象执行运行时类型检查。
+- 目标是基类/派生类指针或引用：仅对多态对象执行运行时类型检查；
+- 目标是 `Bits<T>`：返回 `Optional<T>`，把源对象的字节序列重解读为 `T`
+  （见[位模式重解释](#位模式重解释castbitst)）。
 
 ```cpp
 // 借用多态对象，不复制或转移 File
@@ -69,10 +71,54 @@ if (is<File&>(writer)) {
 | 去除 `const` | **编译期拒绝** |
 
 字节类型指针之间的转换单独允许，因为它是 C 互操作的必要操作（把
-`const char*` 字面量交给接受 `const uint8_t*` 的接口）。其他类型双关
-（如 `float*` → `uint32_t*`）一律拒绝——需要重解释位模式时使用核心库的
-`bit_cast<T>(value)`，它要求两个类型大小相同且可平凡复制，语义明确且不产生
-别名问题。
+`const char*` 字面量交给接受 `const uint8_t*` 的接口）。其他类型的指针双关
+（如 `float*` → `uint32_t*`）一律拒绝：那会产生别名问题，而且真正需要的是
+读出值再重解释位模式，见下节。
+
+### 位模式重解释：`cast<Bits<T>>`
+
+"把 `float` 的值转成 `uint32_t`"有两种截然不同的含义，因此不能由源类型和目标
+类型自动推断。NCC 让**目标类型**表达这个区别，而不是引入第二个转换函数：
+
+```cpp
+float f = 1.0f;
+
+auto value = cast<uint32_t>(f);              // 值转换：得到 1
+auto bits  = cast<Bits<uint32_t>>(f);        // 位重解释：得到 0x3F800000
+```
+
+`Bits<T>` 是核心库的标记类型，只出现在 `cast` 的目标位置，含义是"把源对象的
+字节序列重新解读为 `T`"。它遵循 `cast` 既有的规则——目标类型决定转换语义与
+返回形态：
+
+| 目标形式 | 语义 | 返回 |
+| --- | --- | --- |
+| `cast<T>(value)` | 值转换，可能失败 | `Optional<T>` |
+| `cast<Bits<T>>(value)` | 位模式重解释 | `Optional<T>` |
+
+**编译期要求**：`sizeof(Source) == sizeof(T)`，且两者都可平凡复制。不满足时
+在编译期拒绝，不是运行时失败。因此 `cast<Bits<T>>` 在运行时**永不返回空值**
+——返回 `Optional` 只为与 `cast` 的统一形态一致，取值方式与
+`cast<Context*>(ptr).value()` 这类同样不会失败的转换相同。
+
+```cpp
+// 常见用途：检查浮点的位表示
+uint32_t raw = cast<Bits<uint32_t>>(3.14f).value();
+bool is_negative = (raw >> 31) != 0;
+
+// 反向同样成立
+float restored = cast<Bits<float>>(raw).value();
+
+// ✗ 编译错误：大小不同
+// cast<Bits<uint64_t>>(3.14f);
+// error: bit reinterpretation requires equal sizes (4 vs 8)
+
+// ✗ 编译错误：String 不可平凡复制
+// cast<Bits<Array<char, 24>>>(some_string);
+```
+
+`Bits<T>` 不是可以持有的类型：不能声明 `Bits<uint32_t> x;`，也不能作为函数
+参数或成员。它只是 `cast` 目标位置上的一个语义标记，这一限制由编译器强制。
 
 ## `concept`/`requires`：用 `comp bool` 函数替代
 
@@ -101,13 +147,18 @@ comp void process<type T>(T& w) requires Writable<T> {
 
 ## 总结
 
-- `cast<T>(value)` - 唯一的转换入口；值、指针和引用目标分别返回对应的 Optional，取代
-  `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast`
-- `is<T>(value)` - `cast<T>(value).has_value()` 的简写，唯一的检查入口
-- `bit_cast<T>(value)` - 同大小可平凡复制类型间的位模式重解释；不是 `cast` 的
-  重载，因为它不做任何检查也不会失败，与 `cast` 的"可失败转换"语义不同
-- `comp bool` 函数 + `<>` - 泛型参数的结构性约束（编译期），取代 `concept` 关键字
+**转换只有一个入口 `cast<T>(value)`**，语义完全由目标类型决定：
 
-`cast` 与 `bit_cast` 的分工：前者转换**值**（`cast<int8_t>(300)` 失败，因为
-300 不可表示），后者重解释**位**（`bit_cast<uint32_t>(1.0f)` 得到
-`0x3F800000`）。两者都不去除 `const`，也都不检查指针寿命。
+| 目标类型 | 语义 | 返回 |
+| --- | --- | --- |
+| 值类型 `T` | 值转换，越界或不可表示时失败 | `Optional<T>` |
+| `T*` | 指针转换，多态时运行时检查 | `Optional<T*>` |
+| `T&` | 借用，不复制不移动 | `Optional<reference_wrapper<T>>` |
+| `Bits<T>` | 位模式重解释，大小与平凡性在编译期检查 | `Optional<T>` |
+
+取代 `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast` 四个关键字，
+且没有第二个转换函数——位重解释通过目标类型 `Bits<T>` 表达，而不是另立
+`bit_cast`。所有形式都不去除 `const`，也都不检查指针寿命。
+
+- `is<T>(value)` - `cast<T>(value).has_value()` 的简写，唯一的检查入口
+- `comp bool` 函数 + `<>` - 泛型参数的结构性约束（编译期），取代 `concept` 关键字

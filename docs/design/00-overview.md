@@ -101,7 +101,8 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
   对应的 `Optional`，多态转换只做定义明确的运行时检查，不复制或转移借用对象。
   删除 `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast`，统一到
   `cast<T>`。`is<T>(value)` 是不复制、不移动对象的检查简写，等价于
-  `cast<T>(value).has_value()`。
+  `cast<T>(value).has_value()`。位模式重解释不另立函数，而是通过目标类型
+  `cast<Bits<T>>(value)` 表达——语义始终由目标类型决定，转换入口只有一个。
 - **`concept` 关键字删除**：类型约束用 `comp bool` 函数表达。`requires` 语法
   保留（C++20 已有），因为它解决的是约束的**应用位置**（模板参数、函数签名），
   而 `comp bool` 函数解决的是约束的**定义**，两者职责不重叠。

@@ -58,7 +58,7 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[06-casting.md](06-casting.md)** - 类型转换
   - `cast<T>` 统一转换函数
   - `is<T>` 类型检查
-  - `bit_cast<T>` 位模式重解释与指针转换规则
+  - 指针转换规则与 `cast<Bits<T>>` 位模式重解释
   - `comp bool` 函数替代 `concept`
 
 - **[07-interfaces.md](07-interfaces.md)** - 接口系统
