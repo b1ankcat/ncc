@@ -7,7 +7,7 @@ C++26 已经有 `export module` / `import` 这套模块机制（C++20 引入）�
 ## 定义模块
 
 ```cpp
-// math.ccm —— 定义一个模块
+// math.ncc —— 定义一个模块
 export module math;
 
 export double square(double x) {
@@ -18,7 +18,7 @@ export double square(double x) {
 ## 使用模块
 
 ```cpp
-// main.ccm —— 使用模块
+// main.ncc —— 使用模块
 import math;
 
 int main() {
@@ -29,14 +29,28 @@ int main() {
 ## 核心库是内置全局符号
 
 `String`、`Vector<T>`、`Optional<T>`、`unique_ptr<T>`、`shared_ptr<T>`、
-`weak_ptr<T>`、`println`、反射用的 `Info`/`^^`/`[: :]` 等，全部像 `int32_t`、
+`weak_ptr<T>`、`make_unique`/`make_shared`、`println`、反射用的
+`Info`/`^^`/`[: :]` 等，全部像 `int32_t`、
 `bool` 一样，是语言内置的一部分，直接使用，不挂在任何 `std` 或其他命名空间下，
 也不需要额外 `import`。用户自己拆分的多文件项目之间用 `import 模块名;` 互相引用。
 
+导入模块不自动形成 namespace；同名导出使用已批准的 `import module as alias;`
+扩展建立模块别名：
+
+```cpp
+import http as http_client;
+import another_http as other_http;
+
+http_client::Client a;
+other_http::Client b;
+```
+
+`as` 只建立模块访问前缀，不改变导出符号原名。未限定使用存在多个候选时，
+编译器必须报告歧义并要求使用别名。
+
 ## 格式化：`println` / `format`
 
-`println`/`format` 与 C++20 `std::format`（Rust `format!`/`fmt` 同级）能力
-对齐：占位符支持位置参数、具名参数、宽度/精度/对齐/进制等标准格式规格，
+`println`/`format` 共用格式化引擎：占位符支持位置参数、具名参数、宽度/精度/对齐/进制，
 语法就是 `std::format` 的花括号规格（去掉 `std::` 前缀，作为内置函数）：
 
 ```cpp
@@ -52,8 +66,7 @@ println("{:>10.2f}", 3.14159);                      // 对齐 / 精度
 
 ## 内置日志库
 
-核心库内置一个日志类型 `Logger`，能力对齐社区常见日志库（如 spdlog、
-tracing），不需要 `import`：
+核心库内置一个日志类型 `Logger`，不需要 `import`：
 
 ```cpp
 log_info("user {} logged in", user.id);
@@ -80,10 +93,27 @@ export module containers;
 // ✓ 导出 comp class（完整定义）
 export comp class CustomPtr<type T> {
     T* ptr_;
-    
-    CustomPtr(T* p = nullptr) : ptr_(p) {}
-    ~CustomPtr() { if (ptr_) delete ptr_; }
-    
+
+public:
+    explicit CustomPtr(T* p = nullptr) noexcept : ptr_(p) {}
+    ~CustomPtr() noexcept { delete ptr_; }
+
+    CustomPtr(const CustomPtr&) = delete;
+    CustomPtr& operator=(const CustomPtr&) = delete;
+
+    CustomPtr(CustomPtr&& other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+
+    CustomPtr& operator=(CustomPtr&& other) noexcept {
+        if (this != &other) {
+            delete ptr_;
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
+        return *this;
+    }
+
     T& operator*() { return *ptr_; }
     T* operator->() { return ptr_; }
 };
@@ -92,11 +122,14 @@ export comp class CustomPtr<type T> {
 export comp class CustomPtr<type T>;  // 编译错误：comp class 必须包含完整定义
 ```
 
+`CustomPtr` 仅示范拥有单个对象的指针封装，要求对象析构不抛异常。裸指针
+不会自动禁止拷贝，因此此处显式定义所有权操作；comp 不改变特殊成员函数规则。
+
 **完整定义必须可见的原因：**
 
 - `comp class` 是编译期代码生成机制
 - 编译器需要在使用处看到完整的类体才能实例化
-- 类似 C++ 模板，必须在模块导出中包含完整实现
+- 模块元数据必须包含实例化所需的完整实现
 
 ### 实例化模型
 

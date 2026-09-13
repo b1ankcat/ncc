@@ -140,6 +140,13 @@ Vector<wchar_t> wide = s.to_wide();  // Windows 上可用（核心库提供）
 
 ## 数组与动态数组
 
+NCC 当前仅支持 64 位目标；32 位目标不在语言、ABI 和核心库支持范围内。
+
+String 默认严格拒绝非法 UTF-8；显式替换模式使用 U+FFFD。StringView 不拥有
+数据，来源 String 销毁或重分配后失效。COW 写入必须先取得唯一可写存储，裸指针
+不能绕过该规则。低精度类型的宽度、对齐、舍入和累加精度由类型定义；不支持的
+硬件使用软件 fallback 或在编译期拒绝。
+
 ```cpp
 // 固定大小数组：内置 Array<T, N>（栈分配）
 Array<int32_t, 10> fixed;
@@ -305,7 +312,7 @@ void process_file(const String& path) {
 
 // 智能指针自动管理内存
 void process() {
-    unique_ptr<Data> p(new Data());
+    unique_ptr<Data> p = make_unique<Data>(...);
     
     // 如果抛异常，p 自动析构（释放内存）
     risky_operation();
@@ -345,7 +352,7 @@ public:
 
 ## Tagged Enum（携带数据的枚举）
 
-唯二语法例外之一，语法对应 Rust 的 `enum`：
+三类语法例外之一：枚举变体可以携带数据，匹配使用普通调用形式的 `comp` 函数。
 
 ```cpp
 enum Shape {
@@ -354,20 +361,28 @@ enum Shape {
     Point,                       // 无数据
 };
 
-// 构造：标准聚合初始化语法
+// 构造载荷值，再构造相应的枚举值
 Shape s = Shape::Circle(5.0);
 s = Shape::Rect(2.0, 4.0);
 
 // 取值：使用 match comp 函数
-double area = match(s) {
-    Circle(r) => 3.14 * r * r,
-    Rect(w, h) => w * h,
-    Point => 0.0,
-};
+double area = match(
+    s,
+    [](const Shape::Circle& c) {
+        auto [r] = c;
+        return 3.14 * r * r;
+    },
+    [](const Shape::Rect& rect) {
+        auto [w, h] = rect;
+        return w * h;
+    },
+    [](const Shape::Point&) { return 0.0; }
+);
 
 // 或者使用 cast/is API
-if (auto c = cast<Shape::Circle>(s)) {
-    println("radius = {}", c->radius);
+if (auto c = cast<Shape::Circle&>(s)) {
+    const auto& [radius] = c.get();
+    println("radius = {}", radius);
 }
 if (is<Shape::Rect>(s)) {
     println("s is a Rect");
@@ -412,64 +427,87 @@ struct Shape {
 Shape s = Shape::Circle(5.0);
 s = Shape::Rect(2.0, 4.0);  // 重新赋值
 
-// 编译器生成的赋值运算符：
-// 1. 调用当前变体（Circle）的析构函数
-// 2. 复制构造新变体（Rect）
+// 编译器生成的赋值运算符：先构造临时值，成功后再替换当前值。
+// 新变体构造失败时，s 保持原来的 Circle，不会留下无效 tag。
 Shape& Shape::operator=(const Shape& other) {
     if (this != &other) {
-        destroy_current_variant();  // 析构旧变体
-        
-        tag = other.tag;
-        switch (tag) {
-            case Tag::Circle:
-                new (&data.circle) Circle(other.data.circle);
-                break;
-            case Tag::Rect:
-                new (&data.rect) Rect(other.data.rect);
-                break;
-            case Tag::Point:
-                new (&data.point) Point(other.data.point);
-                break;
-        }
+        Shape temporary(other);       // 可能抛出；当前对象尚未改变
+        swap(temporary);               // 交换 tag 和活动载荷
     }
     return *this;
 }
 ```
 
+编译器为每个 Tagged enum 生成 `swap`：交换 tag 后，仅对实际活动的载荷调用
+不抛异常的移动构造或交换操作；临时对象析构原来的载荷。若载荷不提供不抛
+异常的交换/移动，赋值操作按 C++ 重载规则被删除或降级为其可用的异常保证，
+不会伪造强保证。析构函数遵循 C++ 的 `noexcept` 规则；仅可移动载荷使枚举
+自动成为仅可移动类型，不可默认构造载荷只限制对应变体构造路径。自赋值和
+自移动遵循 C++ 特殊成员函数规则。
+
 ### match comp 函数（穷尽性检查）
 
-`match` 是 `comp` 函数，提供穷尽性检查：
+`match(value, handler...)` 是普通调用形式的 **`comp` 函数**，不是关键字或
+特殊表达式。处理函数使用普通 lambda 或其他可调用对象；函数实现通过公开的
+comp/反射能力检查全部变体并生成分发代码，用户可实现同等能力的函数。
+
+**调用契约：**
+
+- 每个变体都有可命名的载荷类型，如 `Shape::Circle`。载荷按声明顺序支持
+  标准结构化绑定；匿名载荷不自动获得 `radius`、`width` 等业务字段名。
+- 处理函数组成重载集合，按 C++ 调用规则为每个变体选择唯一的可调用处理函数。
+  任一变体缺少处理函数或调用有歧义，均在编译期报错。
+- 只调用当前活动变体对应的处理函数一次。枚举表达式求值一次，载荷保留其
+  const 和值类别传递；接收引用的处理函数不会因为匹配而复制载荷。
+- 所有可达处理调用的返回类型必须一致（包含引用限定），全部为 `void` 也合法。
+  处理函数的异常按普通函数调用规则传播。
+- 普通泛型 lambda 可以作为兜底处理函数，不引入专用通配符或分支语法。
+
+下例使用运行时枚举：穷尽检查和分发代码生成在编译期完成，选中的处理函数
+在运行时执行。这里只确定调用契约；通用 comp 求值阶段与反射展开规则仍待
+审查第 3、4 项统一定稿，不给 `match` 单独设置阶段例外。
 
 ```cpp
-// match 是表达式，可以返回值
-double area = match(s) {
-    Circle(r) => 3.14 * r * r,
-    Rect(w, h) => w * h,
-    Point => 0.0,
-};
-
-// match 也可以是语句（不返回值）
-match(s) {
-    Circle(r) => println("Circle: radius {}", r),
-    Rect(w, h) => println("Rect: {}x{}", w, h),
-    Point => println("Point"),
-};
+// 普通函数调用，也可以只执行操作、不返回值
+match(
+    s,
+    [](const Shape::Circle& c) {
+        const auto& [r] = c;
+        println("Circle: radius {}", r);
+    },
+    [](const Shape::Rect& rect) {
+        const auto& [w, h] = rect;
+        println("Rect: {}x{}", w, h);
+    },
+    [](const Shape::Point&) { println("Point"); }
+);
 
 // 编译期穷尽性检查
-double bad = match(s) {
-    Circle(r) => 3.14 * r * r,
-    Rect(w, h) => w * h,
+double bad = match(
+    s,
+    [](const Shape::Circle& c) {
+        auto [r] = c;
+        return 3.14 * r * r;
+    },
+    [](const Shape::Rect& rect) {
+        auto [w, h] = rect;
+        return w * h;
+    }
     // 缺少 Point 变体
-};
+);
 // 编译错误：
-// error: non-exhaustive pattern match
+// error: non-exhaustive match call
 // note: missing variant: Shape::Point
 
-// 使用通配符 _ 捕获剩余变体
-double approx = match(s) {
-    Circle(r) => 3.14 * r * r,
-    _ => 0.0,  // 匹配 Rect 和 Point
-};
+// 使用普通泛型 lambda 处理其余变体
+double approx = match(
+    s,
+    [](const Shape::Circle& c) {
+        auto [r] = c;
+        return 3.14 * r * r;
+    },
+    [](const auto&) { return 0.0; }  // 匹配 Rect 和 Point
+);
 ```
 
 ### 泛型 Tagged Enum
@@ -482,12 +520,16 @@ enum Option<type T> {
 };
 
 // 使用
-Option<int32_t> maybe = Option::Some(42);
+Option<int32_t> maybe = Option<int32_t>::Some(42);
 
-match(maybe) {
-    Some(value) => println("Value: {}", value),
-    None => println("No value"),
-};
+match(
+    maybe,
+    [](const Option<int32_t>::Some& some) {
+        const auto& [value] = some;
+        println("Value: {}", value);
+    },
+    [](const Option<int32_t>::None&) { println("No value"); }
+);
 ```
 
 ### 嵌套 Tagged Enum
@@ -501,11 +543,21 @@ enum Expr {
 
 // 递归访问
 int32_t eval(Expr* e) {
-    return match(*e) {
-        Lit(n) => n,
-        Add(left, right) => eval(left) + eval(right),
-        Mul(left, right) => eval(left) * eval(right),
-    };
+    return match(
+        *e,
+        [](const Expr::Lit& lit) {
+            auto [n] = lit;
+            return n;
+        },
+        [](const Expr::Add& add) {
+            auto [left, right] = add;
+            return eval(left) + eval(right);
+        },
+        [](const Expr::Mul& mul) {
+            auto [left, right] = mul;
+            return eval(left) * eval(right);
+        }
+    );
 }
 ```
 

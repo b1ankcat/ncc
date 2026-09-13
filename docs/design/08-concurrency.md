@@ -1,16 +1,17 @@
 # 八、并发与多线程
 
-NCC 的并发模型基于两个核心范式：
-1. **数据并行**：统一的 `parallel`/`reduce` API，通过 `Device` 参数选择 CPU 或 GPU
-2. **任务并发**：Go 风格的轻量级任务（`Thread::spawn` + `Channel`）
+NCC 的并发模型只有一个主旨：**结构化并发**。每个任务属于一个明确的
+`TaskScope`，作用域结束前任务必须完成、取消或被显式转移。
 
-无需新增关键字，全部通过 `comp` 函数和库实现。
+数据并行（`parallel`/`reduce`）、轻量任务和 `Channel` 都是这个作用域中的库 API。
+
+无需新增关键字，全部通过普通库函数实现；`comp` 仅用于编译期配置和代码生成。
 
 ## 核心理念
 
 - **统一的并行 API**：`parallel` 和 `reduce` 接受 `Device` 参数，CPU/GPU 是实现后端
-- **轻量级任务**：Go 风格的 goroutine（Thread::spawn，2KB 栈，M:N 调度）
-- **通道通信**：Go 风格的 Channel，优先消息传递而非共享内存
+- **作用域任务**：轻量任务可使用 M:N 调度和工作窃取，但不默认脱离作用域
+- **通道通信**：Channel 负责消息传递，不拥有任务，也不决定任务生命周期
 - **零成本抽象**：只为实际选择的执行策略生成所需代码
 - **无新增关键字**：所有特性通过库和 `comp` 函数实现
 
@@ -23,13 +24,13 @@ import parallel;
 
 Vector<int32_t> data(1000000);
 
-// CPU 数据并行
-parallel<Device::Cpu>(data.size(), [&](size_t i) {
+// CPU 数据并行：返回完成句柄，作用域结束前必须完成
+auto done = parallel<Device::Cpu>(data.size(), [&](size_t i) {
     data[i] = compute(i);
 });
+done.wait();
 
-// parallel 是 comp 函数，签名：
-// comp void parallel<Device device>(size_t n, auto func, Schedule schedule = Schedule::Auto);
+// parallel 是运行时库函数，不标记 comp
 ```
 
 ### 统一的 API 设计
@@ -76,15 +77,33 @@ parallel<Device::Cpu>(n, [&](size_t i) { /* ... */ }, Schedule::WorkStealing);
 
 GPU 相关的并行计算请参考 [09-gpu.md](09-gpu.md)。
 
-## 二、任务并发（Go 风格）
+## 二、结构化任务并发
+
+### TaskScope 契约
+
+```cpp
+TaskScope scope;
+
+auto task = scope.spawn([] {
+    return compute_result();
+});
+
+int32_t result = task.join();
+```
+
+`TaskScope` 拥有在其中创建的任务。任务句柄是 move-only；`join()` 等待并返回
+结果，任务异常由 `join()` 重新抛出。作用域结束时，未完成任务先请求取消再等待；
+也可以显式 `detach()` 转移生命周期责任。`Thread::sleep()` 只能用于延时，不能
+表示任务完成。捕获局部引用仍遵循 C++ 规则，结构化作用域不增加借用检查。
 
 ### 启动轻量级任务
 
 ```cpp
 import thread;
 
-// Thread::spawn 创建轻量级任务（类似 Go goroutine）
-auto task = Thread::spawn([]{
+// TaskScope::spawn 创建轻量级任务
+TaskScope scope;
+auto task = scope.spawn([]{
     println("Running in background");
     compute_work();
 });
@@ -92,7 +111,7 @@ auto task = Thread::spawn([]{
 task.join();
 
 // 带返回值
-auto task = Thread::spawn([]{
+auto task = scope.spawn([]{
     return compute_result();
 });
 
@@ -101,7 +120,7 @@ int32_t result = task.join();
 
 ### 轻量级任务特性
 
-- **栈初始 2KB**，按需增长（类似 Go）
+- **栈初始 2KB**，按需增长
 - **M:N 调度**：M 个任务映射到 N 个 OS 线程
 - **工作窃取**：空闲线程从其他线程窃取任务
 - **百万级并发**：可以轻松创建数十万个任务
@@ -114,7 +133,8 @@ import channel;
 // 无缓冲通道（同步）
 Channel<int32_t> ch;
 
-Thread::spawn([&]{
+TaskScope scope;
+scope.spawn([&]{
     ch.send(42);  // 阻塞直到接收
 });
 
@@ -135,7 +155,8 @@ int32_t v2 = ch.recv();  // 2
 ```cpp
 Channel<int32_t> ch(10);
 
-Thread::spawn([&]{
+TaskScope scope;
+auto producer = scope.spawn([&]{
     for (int i = 0; i < 10; ++i) {
         ch.send(i);
     }
@@ -146,6 +167,7 @@ Thread::spawn([&]{
 for (auto value : ch) {
     println("{}", value);
 }
+producer.join();
 ```
 
 ### Select 多路复用
@@ -179,48 +201,65 @@ auto result = Channel::select(
 
 ```cpp
 void producer_consumer() {
+    TaskScope scope;
     Channel<Work> queue(100);
+    Vector<Task> producers;
+    Vector<Task> consumers;
     
     // 4 个生产者
     for (size_t i = 0; i < 4; ++i) {
-        Thread::spawn([&, i]{
+        producers.push(scope.spawn([&, i]{
             for (size_t j = 0; j < 100; ++j) {
                 queue.send(Work{.id = i * 100 + j});
             }
-        });
+        }));
     }
     
     // 8 个消费者
     for (size_t i = 0; i < 8; ++i) {
-        Thread::spawn([&]{
+        consumers.push(scope.spawn([&]{
             for (auto work : queue) {
                 process(work);
             }
-        });
+        }));
     }
     
-    // 等待生产者完成
-    Thread::sleep(1s);
+    for (auto& producer : producers) {
+        producer.join();
+    }
     queue.close();
+    for (auto& consumer : consumers) {
+        consumer.join();
+    }
 }
 ```
+
+`Channel::close()` 由发送方调用；关闭后发送抛出 `ChannelClosed`，接收端在缓冲区
+排空后返回空值，范围 `for` 随之结束。多个生产者必须先全部 `join()`，再关闭通道。
 
 ### 工作池模式
 
 ```cpp
 struct WorkerPool {
+    TaskScope scope;
     Channel<Task> tasks;
     Vector<Thread::Handle> workers;
     
     WorkerPool(size_t num_workers) : tasks(1000) {
         for (size_t i = 0; i < num_workers; ++i) {
-            workers.push(Thread::spawn([this]{
+            workers.push(scope.spawn([this]{
                 for (auto task : tasks) {
                     task.execute();
                 }
             }));
         }
     }
+
+    // 工作任务捕获 this，因此示例固定池对象的位置和所有权
+    WorkerPool(const WorkerPool&) = delete;
+    WorkerPool& operator=(const WorkerPool&) = delete;
+    WorkerPool(WorkerPool&&) = delete;
+    WorkerPool& operator=(WorkerPool&&) = delete;
     
     void submit(Task task) {
         tasks.send(task);
@@ -300,9 +339,10 @@ struct Cache {
 
 ```cpp
 void apply_filter(Image& img) {
-    parallel<Device::Cpu>(img.height(), img.width(), [&](size_t y, size_t x) {
+    auto done = parallel<Device::Cpu>(img.height(), img.width(), [&](size_t y, size_t x) {
         img(y, x) = blur(img, y, x);
     });
+    done.wait();
 }
 ```
 
@@ -310,13 +350,14 @@ void apply_filter(Image& img) {
 
 ```cpp
 void http_server() {
+    TaskScope scope;
     TcpListener listener("127.0.0.1:8080");
     
-    loop {
+    for (;;) {
         TcpStream conn = listener.accept();
         
         // 每个连接启动一个轻量级任务
-        Thread::spawn([conn = move(conn)]{
+        scope.spawn([conn = move(conn)]{
             handle_connection(conn);
         });
     }
@@ -327,39 +368,46 @@ void http_server() {
 
 ```cpp
 void pipeline() {
+    TaskScope scope;
     Channel<RawData> stage1(100);
     Channel<ProcessedData> stage2(100);
     Channel<Result> stage3(100);
     
     // Stage 1: 读取数据
-    Thread::spawn([&]{
+    auto producer = scope.spawn([&]{
         for (auto data : read_input()) {
             stage1.send(data);
         }
-        stage1.close();
     });
     
     // Stage 2: 处理数据（多个 worker）
+    Vector<Task> workers;
     for (size_t i = 0; i < 4; ++i) {
-        Thread::spawn([&]{
+        workers.push(scope.spawn([&]{
             for (auto data : stage1) {
                 stage2.send(process(data));
             }
-        });
+        }));
     }
     
     // Stage 3: 保存结果
-    Thread::spawn([&]{
+    auto saver = scope.spawn([&]{
         for (auto data : stage2) {
             stage3.send(save(data));
         }
         stage3.close();
     });
     
-    // 等待完成
+    producer.join();
+    stage1.close();
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    stage2.close();
     for (auto result : stage3) {
         println("Result: {}", result);
     }
+    saver.join();
 }
 ```
 
@@ -367,20 +415,23 @@ void pipeline() {
 
 ```cpp
 void hybrid_computation() {
+    TaskScope scope;
     Vector<Image> images = load_images();
     
     // 1. CPU 并行预处理
-    parallel<Device::Cpu>(images.size(), [&](size_t i) {
+    auto preprocess_done = parallel<Device::Cpu>(images.size(), [&](size_t i) {
         images[i] = preprocess(images[i]);
     });
+    preprocess_done.wait();
     
     // 2. 任务并发上传结果
     Channel<Result> results(100);
     
+    Vector<Task> uploads;
     for (auto& img : images) {
-        Thread::spawn([&, img]{
+        uploads.push(scope.spawn([&, img]{
             results.send(upload(img));
-        });
+        }));
     }
     
     // 收集结果
@@ -388,6 +439,10 @@ void hybrid_computation() {
         auto result = results.recv();
         println("Uploaded: {}", result);
     }
+    for (auto& upload : uploads) {
+        upload.join();
+    }
+    results.close();
 }
 ```
 
@@ -429,23 +484,27 @@ parallel<Device::Cpu>(n, [&](size_t i) {
 // ✓ 好
 parallel<Device::Cpu>(data.size(), [&](size_t i) { /* ... */ });
 
-// ✗ 差：手动创建线程
+// ✗ 差：绕过作用域，手动创建脱离管理的任务
 for (size_t i = 0; i < num_threads; ++i) {
-    Thread::spawn(...);
+    Thread::spawn(...);  // 低层 API；不会继承 TaskScope
 }
 ```
 
-### 2. 任务并发用 Thread::spawn + Channel
+### 2. 任务并发用 TaskScope + Channel
 
 ```cpp
 // ✓ 好：通道通信
 Channel<Result> ch;
-Thread::spawn([&]{ ch.send(compute()); });
+TaskScope scope;
+auto task = scope.spawn([&]{ ch.send(compute()); });
 Result r = ch.recv();
+task.join();
+ch.close();
 
 // ✗ 差：共享内存
 Mutex<Result> result;
-Thread::spawn([&]{ /* 写 result */ });
+TaskScope scope;
+scope.spawn([&]{ /* 写 result */ });
 ```
 
 ### 3. 优先通道，避免锁
@@ -462,14 +521,14 @@ Mutex<int32_t> counter;
 
 | 场景 | 解决方案 | API |
 |------|---------|-----|
-| CPU 数据并行 | OpenMP 风格 | `parallel<Device::Cpu>` |
+| CPU 数据并行 | 数据并行 API | `parallel<Device::Cpu>` |
 | GPU 数据并行 | 参见 GPU 文档 | `parallel<Device::Gpu>` |
-| 任务并发 | Go 风格 | `Thread::spawn` + `Channel` |
+| 任务并发 | 结构化任务作用域 | `TaskScope::spawn` + `Channel` |
 | 同步原语 | 标准 C++ | `Mutex`、`Atomic`、`RwLock` |
 
 **核心优势**：
 - ✅ 统一的 CPU/GPU API（`parallel` + `Device` 参数）
-- ✅ 轻量级任务系统（Go 风格）
+- ✅ 结构化轻量级任务系统
 - ✅ 无新增关键字（全部库 + comp 函数）
 - ✅ 零成本抽象（只为选定策略生成所需代码）
 

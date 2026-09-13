@@ -4,8 +4,9 @@ NCC 与 C 语言完全兼容，可以无缝调用 C 库和暴露接口给 C 代�
 
 **设计原则：**
 - **只与 C 互操作**：不直接调用 C++ 库（避免命名空间、模板等复杂性）
-- **零成本抽象**：C 函数调用无性能开销
-- **显式声明**：外部 C 函数需要显式声明，编译器不自动导入
+- **零成本抽象**：C 函数调用无额外运行时包装开销
+- **显式 ABI**：C 函数声明必须放在 `extern "C"` 中；`import libc` 等内置绑定
+  由编译器生成这些显式声明，不把未定义函数自动猜成 C ABI
 
 ## 调用 C 函数
 
@@ -13,11 +14,13 @@ NCC 与 C 语言完全兼容，可以无缝调用 C 库和暴露接口给 C 代�
 
 ```cpp
 // 声明 C 标准库函数
-int32_t open(const char* path, int32_t flags);
-void close(int32_t fd);
-void* malloc(size_t size);
-void free(void* ptr);
-int32_t printf(const char* fmt, ...);
+extern "C" {
+    c_int open(const char* path, c_int flags);
+    void close(c_int fd);
+    void* malloc(size_t size);
+    void free(void* ptr);
+    c_int printf(const char* fmt, ...);
+}
 
 // 使用
 int main() {
@@ -28,9 +31,9 @@ int main() {
 ```
 
 **编译器行为：**
-- 识别未定义的函数为外部符号
-- 生成 C ABI 调用（C calling convention）
-- 链接时解析符号（从 libc 等）
+- 只把 `extern "C"` 声明视为 C ABI 外部符号
+- 按目标平台的 C calling convention 生成调用
+- 链接时按声明的 C 符号解析（从 libc 等）
 
 ### 使用 import 批量导入
 
@@ -56,19 +59,22 @@ int main() {
 - `import posix` - POSIX API（unistd.h, fcntl.h, sys/socket.h 等）
 - `import pthread` - POSIX 线程库
 
+这些导入由编译器根据目标平台头文件和 ABI 生成显式的 `extern "C"` 声明；
+导入不会改变 NCC 函数的默认 C++ ABI，也不会自动导入任意第三方头文件。
+
 ## C 类型映射
 
 ### 标量类型
 
 ```cpp
-// C 类型 → NCC 类型（自动映射）
+// C 类型 → NCC 类型（按目标 ABI 映射）
 char          → char
 signed char   → int8_t
 unsigned char → uint8_t
-short         → int16_t
-int           → int32_t
-long          → int64_t (64位系统) / int32_t (32位系统)
-long long     → int64_t
+short         → c_short
+int           → c_int
+long          → c_long
+long long     → c_long_long
 size_t        → size_t
 ssize_t       → ssize_t
 
@@ -77,6 +83,26 @@ double        → double
 
 void*         → void*
 ```
+
+`c_short`、`c_int`、`c_long` 和 `c_long_long` 是核心库提供的 ABI 精确类型；
+它们的宽度和对齐由目标三元组决定。不能用机器位数替代 ABI 判断：Windows x64
+的 `long` 仍为 32 位，Linux x86_64 的 `long` 通常为 64 位。需要固定宽度时，
+C API 本身应使用 `int32_t`/`int64_t` 等固定宽度类型。
+
+### 变参与回调
+
+变参函数遵循 C 的默认参数提升规则，格式字符串不会触发额外的隐式类型检查：
+
+```cpp
+extern "C" {
+    c_int printf(const char* format, ...);
+    using Callback = void(*)(c_int value);
+}
+```
+
+C 回调的函数指针必须显式声明在 C linkage 块中；NCC 闭包只有在无捕获且具有
+兼容签名时才能转换为该回调类型。带捕获闭包需要通过不透明上下文指针和显式
+销毁函数传递。
 
 ### 指针类型
 
@@ -109,7 +135,7 @@ c_data.x = 10;
 c_data.y = 20;
 
 // 传递给 C 函数
-void process_c_struct(CStruct* s);
+extern "C" void process_c_struct(CStruct* s);
 process_c_struct(&c_data);
 ```
 
@@ -189,13 +215,15 @@ void tcp_server(uint16_t port) {
 using sqlite3 = void;
 using sqlite3_stmt = void;
 
-int32_t sqlite3_open(const char* filename, sqlite3** ppDb);
-int32_t sqlite3_close(sqlite3* db);
-int32_t sqlite3_prepare_v2(sqlite3* db, const char* sql, int32_t len, 
-                           sqlite3_stmt** stmt, const char** tail);
-int32_t sqlite3_step(sqlite3_stmt* stmt);
-int32_t sqlite3_finalize(sqlite3_stmt* stmt);
-const char* sqlite3_column_text(sqlite3_stmt* stmt, int32_t col);
+extern "C" {
+    int32_t sqlite3_open(const char* filename, sqlite3** ppDb);
+    int32_t sqlite3_close(sqlite3* db);
+    int32_t sqlite3_prepare_v2(sqlite3* db, const char* sql, int32_t len,
+                               sqlite3_stmt** stmt, const char** tail);
+    int32_t sqlite3_step(sqlite3_stmt* stmt);
+    int32_t sqlite3_finalize(sqlite3_stmt* stmt);
+    const char* sqlite3_column_text(sqlite3_stmt* stmt, int32_t col);
+}
 
 // 使用
 class Database {
@@ -211,6 +239,12 @@ public:
     ~Database() {
         sqlite3_close(db_);
     }
+
+    // 此示例不提供连接所有权转移
+    Database(const Database&) = delete;
+    Database& operator=(const Database&) = delete;
+    Database(Database&&) = delete;
+    Database& operator=(Database&&) = delete;
     
     Vector<String> query(const String& sql) {
         sqlite3_stmt* stmt;
@@ -376,7 +410,7 @@ public:
 Vector<int32_t> vec = {1, 2, 3, 4, 5};
 
 // 传递给 C 函数
-void c_function(const int32_t* arr, size_t len);
+extern "C" void c_function(const int32_t* arr, size_t len);
 c_function(vec.data(), vec.size());
 ```
 
@@ -502,22 +536,35 @@ comp {
 ```cpp
 // ✓ 好：RAII 包装
 class File {
-    int fd_;
+    int fd_ = -1;
     
 public:
-    File(const char* path) : fd_(open(path, O_RDONLY)) {
+    explicit File(const char* path) : fd_(open(path, O_RDONLY)) {
         if (fd_ < 0) {
             throw IOException("Failed to open file");
         }
     }
     
-    ~File() {
+    ~File() noexcept {
         if (fd_ >= 0) close(fd_);
     }
     
     // 禁止拷贝
     File(const File&) = delete;
     File& operator=(const File&) = delete;
+
+    File(File&& other) noexcept : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
+
+    File& operator=(File&& other) noexcept {
+        if (this != &other) {
+            if (fd_ >= 0) close(fd_);
+            fd_ = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
 };
 
 // ✗ 差：手动管理
@@ -525,6 +572,10 @@ int fd = open("file.txt", O_RDONLY);
 // ... 使用
 close(fd);  // 容易忘记
 ```
+
+拷贝与移动按 C++ 规则由资源封装类型定义；裸句柄不会自动禁用拷贝。
+移动后源 File 为空句柄，移动赋值释放目标已有句柄；清理期间的关闭错误处理
+边界与 [内存管理](03-memory.md) 中的 File 示例一致。
 
 ### 2. 不透明句柄模式
 
@@ -605,9 +656,11 @@ extern "C" {
 
 ```cpp
 // myapp.ncc (NCC 代码)
-void* boost_io_context_create();
-void boost_io_context_destroy(void* ctx);
-void boost_io_context_run(void* ctx);
+extern "C" {
+    void* boost_io_context_create();
+    void boost_io_context_destroy(void* ctx);
+    void boost_io_context_run(void* ctx);
+}
 
 class IoContext {
     void* ctx_;
@@ -615,6 +668,13 @@ class IoContext {
 public:
     IoContext() : ctx_(boost_io_context_create()) {}
     ~IoContext() { boost_io_context_destroy(ctx_); }
+
+    // 此示例不提供上下文所有权转移
+    IoContext(const IoContext&) = delete;
+    IoContext& operator=(const IoContext&) = delete;
+    IoContext(IoContext&&) = delete;
+    IoContext& operator=(IoContext&&) = delete;
+
     void run() { boost_io_context_run(ctx_); }
 };
 ```

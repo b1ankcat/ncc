@@ -1,11 +1,9 @@
 # 四、反射：统一的一套 API
 
-反射不区分"静态反射"和"动态反射"两套 API。原因：反射查询（`^^T`、
-`members_of`、`name_of` 等）本身是 `comp`（consteval）操作，只要类型在
-**当前上下文里是静态已知的**——包括具体类型、模板里的类型参数、tagged enum
-的某个变体——查询就在编译期完成并展开成普通代码。之后这段普通代码在编译期
-被 `comp` 块直接执行，或者留在函数体里在运行时被调用，用的都是**同一份**
-函数，不是"编译期版本"和"运行时版本"两个重载。
+反射使用统一的 `Info` 句柄，同时支持编译期生成和运行时查询。`comp` 只在
+编译期执行：它读取静态类型信息，生成只读运行时描述符、字段访问器和方法桥接
+函数。程序运行时通过 `dynamic_type_of` 取得描述符并查询对象的类型、字段和方法；
+运行时不会执行 `comp`，也不会生成新类型。
 
 ## 核心能力
 
@@ -32,17 +30,30 @@ comp {
 }
 ```
 
-`Info` 是反射信息的统一载体（对应 C++26 `std::meta::info`，去掉 `std::meta::`
-前缀作为内置类型），不需要文档里自造 `TypeInfo`/`FieldInfo`/`MethodInfo`
-结构体——查字段用 `nonstatic_data_members_of`，查方法用 `members_of` 过滤
-`is_function`，查基类用 `bases_of`，全部走同一套函数。
+`Info` 是反射信息的统一载体，可以是编译期反射值或运行时类型描述符的轻量句柄。
+`fields_of`、`methods_of`、`bases_of`、`name_of` 和 `type_of` 在两种上下文中
+使用同一组名称；`nonstatic_data_members_of` 只用于编译期生成场景。
 
-## 同一份代码，既能在编译期跑也能在运行时跑
+运行时通过 `get_field`、`set_field` 和 `invoke` 访问对象；函数检查类型、权限、
+参数数量、参数类型和可写性，失败返回空值或抛出标准异常，不能产生未定义行为。
 
 ```cpp
-// 这个函数没有标成 comp，但只要调用处的 T 是静态已知类型
-// （比如作为泛型参数传入），reflect_dump 内部的反射查询依然在编译期展开
-comp fn reflect_dump<type T>(v: const T&) {
+Info dynamic_type_of(const void& object);
+Vector<Info> fields_of(Info type);
+Vector<Info> methods_of(Info type);
+Optional<Any> get_field(const void* object, Info field);
+void set_field(void* object, Info field, Any value);
+Optional<Any> invoke(const void* object, Info method, Vector<Any> arguments);
+```
+
+`^^T` 得到编译期 `Info`，可用于 `splice` 和代码生成；`dynamic_type_of` 得到
+运行时 `Info`，可用于查询和访问，但不能用于 `splice`、定义新类型或生成新方法。
+多态类型必须在编译期注册；未注册类型返回空结果或抛出明确异常。
+
+## 编译期生成运行时访问器
+
+```cpp
+comp void reflect_dump<type T>(const T& v) {
     for (auto field : nonstatic_data_members_of(^^T)) {
         println("{}: {}", name_of(field), v.[:field:]);
     }
@@ -54,11 +65,10 @@ comp {
     reflect_dump(u);
 }
 
-// 运行时使用：main 里正常调用，字段遍历早已在实例化时展开成
-// 具体的 println 调用序列，运行时执行的是展开后的普通代码
+// main 里调用编译期生成的普通运行时代码
 int main() {
     User u{1, "Alice", "alice@example.com"};
-    reflect_dump(u);   // 同一个 reflect_dump，同一套反射 API
+    reflect_dump(u);
 }
 ```
 
@@ -67,7 +77,7 @@ int main() {
 用 splice `[: ... :]` 把反射结果直接拼回代码，而不是拼字符串再注入：
 
 ```cpp
-comp fn encode_json<type T>(v: const T&) -> String {
+comp String encode_json<type T>(const T& v) {
     String json = "{";
     bool first = true;
     for (auto field : nonstatic_data_members_of(^^T)) {
@@ -80,8 +90,8 @@ comp fn encode_json<type T>(v: const T&) -> String {
 }
 ```
 
-`v.[:field:]` 是反射的成员 splice 语法，直接访问反射得到的数据成员，取代
-自造的字符串拼接 + 代码注入。这份 `encode_json` 同样不区分编译期/运行时。
+`v.[:field:]` 是仅限编译期的成员 splice 语法，直接生成静态成员访问。运行时
+动态对象应使用 `get_field` 或 `invoke`，不能把运行时 `Info` 作为 splice 操作数。
 
 ## Lambda 类型的反射
 
@@ -101,7 +111,7 @@ for (auto capture : captures) {
 comp bool is_gpu_safe(type Lambda) {
     for (auto capture : captures_of(^^Lambda)) {
         auto T = type_of(capture);
-        if (!is_gpu_accessible(T)) {
+        if (!gpu_capture_safe(T, CaptureMode::ByValue)) {
             return false;
         }
     }
@@ -130,85 +140,34 @@ enum class CaptureMode {
 `define_aggregate` 只能定义数据成员的聚合类型，不支持成员函数、构造/析构函数。
 为了支持完整的泛型类定义，引入 `define_class` API：
 
+类生成只决定布局、成员签名及操作选择。生成的资源类调用核心库公开的
+`StorageOps<T, Device>`，不再直接将 malloc/free 与元素构造/析构混为一体。
+这些原语的生成器是核心库写好的 comp 函数，用户自定义容器同样可以使用。
+
 ```cpp
-comp type Vector(type T, Device device = Device::Cpu) {
-    if (device == Device::Cpu) {
-        return [: define_class("Vector_Cpu", {
-            // 数据成员
-            .data_members = {
-                data_member_spec(^^T*, {.name = "data_"}),
-                data_member_spec(^^size_t, {.name = "size_"}),
-                data_member_spec(^^size_t, {.name = "capacity_"}),
-            },
-            // 构造函数
-            .constructors = {
-                // 默认构造
-                constructor_spec({}, [](auto& self) {
-                    self.data_ = nullptr;
-                    self.size_ = 0;
-                    self.capacity_ = 0;
-                }),
-                // 带大小构造
-                constructor_spec({^^size_t}, [](auto& self, size_t n) {
-                    self.data_ = (T*)malloc(n * sizeof(T));
-                    self.size_ = n;
-                    self.capacity_ = n;
-                }),
-            },
-            // 析构函数
-            .destructor = [](auto& self) {
-                if (self.data_) {
-                    free(self.data_);
-                }
-            },
-            // 成员函数
-            .methods = {
-                method_spec("size", {}, ^^size_t, [](const auto& self) {
-                    return self.size_;
-                }),
-                method_spec("push", {^^T}, ^^void, [](auto& self, T value) {
-                    // 扩容逻辑...
-                    self.data_[self.size_++] = value;
-                }),
-                method_spec("to_device", {}, ^^Vector<T, Device::Gpu>, [](const auto& self) {
-                    // 分配 GPU 内存并拷贝
-                    Vector<T, Device::Gpu> result(self.size_);
-                    gpu_memcpy(result.device_ptr_, self.data_, self.size_ * sizeof(T));
-                    return result;
-                }),
-            },
-        }) :];
-    } else {
-        return [: define_class("Vector_Gpu", {
-            .data_members = {
-                data_member_spec(^^void*, {.name = "device_ptr_"}),
-                data_member_spec(^^size_t, {.name = "size_"}),
-            },
-            .constructors = {
-                constructor_spec({^^size_t}, [](auto& self, size_t n) {
-                    self.device_ptr_ = gpu_malloc(n * sizeof(T));
-                    self.size_ = n;
-                }),
-            },
-            .destructor = [](auto& self) {
-                if (self.device_ptr_) {
-                    gpu_free(self.device_ptr_);
-                }
-            },
-            .methods = {
-                method_spec("size", {}, ^^size_t, [](const auto& self) {
-                    return self.size_;
-                }),
-                method_spec("to_host", {}, ^^Vector<T, Device::Cpu>, [](const auto& self) {
-                    Vector<T, Device::Cpu> result(self.size_);
-                    gpu_memcpy_to_host(result.data_, self.device_ptr_, self.size_ * sizeof(T));
-                    return result;
-                }),
-            },
-        }) :];
-    }
-}
+// comp 生成操作类型，随后生成的类可在运行时调用其中的普通函数
+comp type StorageOps(type T, Device device = Device::Cpu);
 ```
+
+Vector 类生成必须包含以下实际操作，生命周期的唯一规范见
+[通用容器原语](03-memory.md#通用容器原语)：
+
+| 生成部分 | 实现要求 |
+| --- | --- |
+| 数据成员 | 原始存储记录、已构造数量 size；capacity 属于存储记录 |
+| 空构造 | 空存储、size 为零，不要求 T 可默认构造 |
+| 大小构造 | 分配后逐个构造；记录成功数量，失败逆序销毁前缀并释放存储 |
+| 拷贝构造/赋值 | 仅在 T 可拷贝构造时生成；复制新存储，成功后提交 |
+| 移动构造/赋值 | 对可转移后端接管记录，清空源记录；赋值先清理目标旧资源 |
+| reserve | 调用分配、move-or-copy 构造、失败清理和最终提交；不改变 size |
+| push/emplace | 在未初始化尾槽构造，成功后更新 size；扩容时先处理尾元素的别名问题 |
+| clear/析构 | 逆序析构活动对象，按需保留或释放原始存储 |
+| GPU 迁移 | 验证元素设备能力，等待构造/传输完成后公开结果；禁止任意 T 的字节拷贝 |
+
+`define_class` 接受 `.data_members`、`.constructors`、`.destructor` 与
+`.methods` 中的公开描述，由相同的生成机制绑定上述实现。没有隐式为裸指针
+补齐深拷贝的特例；生成器必须按 T 的能力提供或删除特殊成员函数。
+普通用户容器可以通过相同描述生成同样的类，不依赖 Vector 的内置名字。
 
 **`define_class` 参数说明：**
 
@@ -230,12 +189,9 @@ comp type Vector(type T, Device device = Device::Cpu) {
 
 ## 多态对象的运行时类型查询
 
-反射查询默认要求类型静态已知。唯一的例外是通过基类指针/引用拿到的多态
-对象——它的具体派生类只有运行时才能确定。这**不需要一套独立的"动态反射"
-API**，只需要在同一套反射 API 里增加一个桥接函数 `dynamic_type_of`：它接收
-一个多态引用，返回和 `^^ConcreteType` 完全一样的 `Info`，之后就能像处理
-静态已知类型一样，用 `name_of`/`members_of`/`nonstatic_data_members_of`
-等**同一套函数**继续查询：
+通过基类指针/引用拿到的多态对象，其具体类型只能在运行时确定。使用同一套
+`Info` 查询函数读取描述符；运行时字段和方法访问使用 `get_field`、`set_field`
+和 `invoke`。这不是第二套反射语法，也不会把运行时类型重新变成编译期类型：
 
 ```cpp
 class Shape {
@@ -257,14 +213,14 @@ void print_kind(const Shape& s) {
     Info T = dynamic_type_of(s);   // 唯一"运行时才能确定"的一步
 
     println("Concrete type: {}", name_of(T));   // 之后完全是同一套反射 API
-    for (auto field : nonstatic_data_members_of(T)) {
+    for (auto field : fields_of(T)) {
+        auto value = get_field(&s, field);
         println("  field: {}", name_of(field));
     }
 }
 ```
 
-**实现原理：** `register_dynamic_type` 在编译期把每个具体子类的 `Info` 存进
-一张挂在虚表旁边的表里；`dynamic_type_of` 在运行时通过虚函数取到这张表里
-对应的 `Info`。用户完全不需要知道这张表的存在——从 `dynamic_type_of` 拿到
-`Info` 之后，后续处理和处理一个编译期静态类型没有任何区别，是**同一套 API
-的一个入口，不是另一套体系**。
+**实现原理：** `register_dynamic_type` 在编译期把具体子类的描述符存进类型表；
+`dynamic_type_of` 在运行时通过虚表关联信息取得描述符。描述符包含由编译期生成
+的字段访问器和方法桥接函数，因此 `invoke` 无需动态生成代码。动态库卸载前必须
+保证没有悬空 `Info` 句柄。

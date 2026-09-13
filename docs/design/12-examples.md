@@ -17,14 +17,14 @@ struct User {
 };
 ```
 
-User 的所有字段都是可拷贝的（`uint64_t`/`String`/`uint32_t`），所以 User
-本身自动可拷贝——这是标准 C++ 的 Rule of Zero 自动推导出的结果，不需要任何
-`comp` 声明。
+User 的所有字段都是可拷贝的（`uint64_t`/`String`/`uint32_t`），且没有声明
+影响隐式拷贝生成的特殊成员函数，因此其隐式拷贝操作可用。这是组合类型遵循
+Rule of Zero 的例子；String 自己负责其资源拷贝契约，不需要额外的 `comp` 声明。
 
 ## 自动生成代码
 
 ```cpp
-comp fn debug_string<type T>(v: const T&) -> String {
+comp String debug_string<type T>(const T& v) {
     String s = String(name_of(^^T)) + "{";
     bool first = true;
     for (auto field : nonstatic_data_members_of(^^T)) {
@@ -87,7 +87,7 @@ struct Handler {
 };
 
 // 自动生成 JSON 序列化
-comp fn serialize_json<type T>(v: const T&) -> String {
+comp String serialize_json<type T>(const T& v) {
     String json = "{";
     bool first = true;
     for (auto field : nonstatic_data_members_of(^^T)) {
@@ -148,7 +148,8 @@ void test_addition() {
 }
 
 void test_string_concat() {
-    String s = "Hello" + " World";
+    String s = "Hello";
+    s += " World";
     assert(s == "Hello World");
 }
 

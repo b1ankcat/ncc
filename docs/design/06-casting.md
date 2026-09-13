@@ -2,31 +2,32 @@
 
 ## `cast<T>(value)`
 
-只暴露一个转换函数，返回 `Optional<T>`，取代标准 C++ 的
-`static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast` 四个关键字——
-数值收窄转换、多态向下转换、指针类型双关、去 `const`，本质都是"给我一个
-新视角看这个值，看不看得通"，统一一个函数：
+只暴露一个转换函数 `cast<T>(value)`，取代标准 C++ 的四个 cast 关键字。
+返回结果的形态由目标类型决定，避免把借用对象错误地复制成拥有值：
+
+- 目标是值类型：返回 `Optional<T>`，执行定义明确的值转换；
+- 目标是 `T*`：返回 `Optional<T*>`，成功时只返回指针，不转移所有权；
+- 目标是 `T&`：返回 `Optional<reference_wrapper<T>>`，成功时借用原对象；
+- 目标是基类/派生类指针或引用：仅对多态对象执行运行时类型检查。
 
 ```cpp
-// cast<T>(value) 返回 Optional<T>，<> 语法触发编译期调用 cast(^^T, value)
-auto file = cast<File>(writer);
+// 借用多态对象，不复制或转移 File
+auto file = cast<File&>(writer);
 
 // 配合 if 初始化语句
-if (auto f = cast<File>(writer)) {
-    f->write("Hello");
+if (auto f = cast<File&>(writer)) {
+    f->get().write("Hello");
 }
 
-// 提供默认值
-auto f = cast<File>(writer).value_or(default_file);
+// 指针目标只借用对象，失败返回空 Optional
+auto f = cast<File*>(writer_ptr);
 
-// 强制转换（自己承担风险）：失败则终止
-auto f = cast<File>(writer).value();
+// 数值转换：溢出或不可表示时失败
+auto small = cast<int8_t>(large_integer);
 
-// 指针类型双关（取代 reinterpret_cast），检查即"按目标类型看是否合法"
-auto bytes = cast<const uint8_t*>("Hello").value();
-
-// 去掉/加上 const（取代 const_cast）
-auto* mutable_p = cast<Point*>(const_ptr).value();
+// 去掉 const 不由 cast 自动完成；必须从一开始取得可写指针
+const Point* const_ptr = get_point();
+// cast<Point*>(const_ptr) -> 失败
 ```
 
 ## `is<T>(value)`：`cast<T>` 的检查专用简写
@@ -36,10 +37,25 @@ auto* mutable_p = cast<Point*>(const_ptr).value();
 `.has_value()`：
 
 ```cpp
-if (is<File>(writer)) {
-    // writer 可以转换成 File，等价于 cast<File>(writer).has_value()
+if (is<File&>(writer)) {
+    // 只检查类型，不复制、不移动、不改变 writer
 }
 ```
+
+`is<T>(value)` 等价于 `cast<T>(value).has_value()`，并保证不会调用拷贝构造、
+移动构造或析构对象。对多态引用/指针，检查的是运行时具体类型；对普通值类型，
+检查的是是否存在定义的值转换。
+
+### 数值转换规则
+
+整数转换要求目标类型能够表示源值，否则失败。浮点转整数要求值为有限值且在
+目标范围内，并按当前舍入模式取整；NaN、无穷大和越界值失败。整数转浮点和
+浮点转浮点在目标精度不足时按 IEEE 754 舍入，但不因精度损失失败。布尔、枚举
+和指针转换必须有明确的目标类型规则；不存在规则的转换直接在编译期拒绝。
+
+`cast` 不检查裸指针指向对象的寿命、别名合法性或底层分配器一致性，也不自动
+去除 `const`。这些仍遵循 C++ 指针语义；需要可写访问时，调用方必须持有可写
+指针或引用。
 
 ## `concept`/`requires`：用 `comp bool` 函数替代
 
@@ -58,7 +74,7 @@ comp bool Writable(type T) {
 }
 
 // 使用：<> 触发编译期调用 Writable(^^T)，返回 bool
-comp fn process<type T>(w: T&) requires Writable<T> {
+comp void process<type T>(T& w) requires Writable<T> {
     w.write(cast<const uint8_t*>("Hello").value(), 5);
 }
 ```
@@ -68,7 +84,7 @@ comp fn process<type T>(w: T&) requires Writable<T> {
 
 ## 总结
 
-- `cast<T>(value)` - 唯一的转换入口，返回 `Optional<T>`，取代
+- `cast<T>(value)` - 唯一的转换入口；值、指针和引用目标分别返回对应的 Optional，取代
   `static_cast`/`dynamic_cast`/`reinterpret_cast`/`const_cast`
 - `is<T>(value)` - `cast<T>(value).has_value()` 的简写，唯一的检查入口
 - `comp bool` 函数 + `<>` - 泛型参数的结构性约束（编译期），取代 `concept` 关键字

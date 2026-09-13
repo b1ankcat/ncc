@@ -23,6 +23,10 @@ comp struct Config {
 `template` 关键字删除，泛型定义改用 `comp` 函数接受 `type` 参数，通过 `<>`
 语法调用时触发编译期代码生成：
 
+函数声明采用 `comp 返回类型 函数名<泛型参数>(普通参数)`，其中普通参数使用
+C++ 的 `类型 参数名` 写法；没有独立的 `fn` 关键字。类型参数列表属于总纲
+已批准的 comp 扩展，求值与实例化阶段仍待审查第 3 项统一定稿。
+
 ```cpp
 // 泛型类型定义（核心库 Vector 的简化示例）
 comp type Vector(type T) {
@@ -38,7 +42,7 @@ comp type Vector(type T) {
 Vector<int32_t> v;  // 等价于编译期调用 Vector(^^int32_t)
 
 // 泛型函数定义
-comp fn max<type T>(a: T, b: T) -> T {
+comp T max<type T>(T a, T b) {
     return a > b ? a : b;
 }
 
@@ -62,15 +66,21 @@ Vector(^^int32_t)        // () 直接调用，返回类型本身（不是对象�
 // 类型查询
 comp bool is(type Target, type Source) { /* 编译期类型检查 */ }
 
-is<File>(writer)         // <> 调用：编译期 is(^^File, ^^typeof(writer))
-is(^^File, ^^Writer)     // () 直接调用，效果相同
+is(^^File, ^^Writer)     // 编译期检查两个类型的关系
 
-// 智能指针
+// 智能指针：类型和工厂都是 comp 函数
 comp type unique_ptr(type T) { /* 生成 unique_ptr<T> 类型 */ }
+comp auto make_unique(type T) { /* 生成该类型专用的工厂函数 */ }
 
 unique_ptr<File> p;      // <> 调用：编译期 unique_ptr(^^File)，得到类型
-unique_ptr<File>(new File(...));  // 先实例化类型，再调构造函数
+unique_ptr<File> q = make_unique<File>("out.txt");
+// make_unique<File> 是编译期调用 make_unique(^^File)，得到一个普通函数；
+// ("out.txt") 是对该函数的运行时调用，参数原样转发给 File 的构造函数
 ```
+
+工厂的两段调用体现了 `<>` 和 `()` 的分工：`<>` 里的类型参数在编译期消耗，
+`()` 里的构造参数在运行时传递。这与 `Vector<T>` 只有编译期一段不同——
+`make_unique<T>` 的生成结果是函数而不是类型。
 
 **`<>` vs `()` 对比**：
 
@@ -81,6 +91,7 @@ unique_ptr<File>(new File(...));  // 先实例化类型，再调构造函数
 
 **适用类型**：
 - `Vector<T>`、`Optional<T>`、`unique_ptr<T>` - 类型生成
+- `make_unique<T>(...)`、`make_shared<T>(...)` - 函数生成，再运行时调用
 - `is<T>(value)`、`cast<T>(value)` - 类型查询/转换
 - 所有需要类型作为参数的 comp 函数
 
@@ -145,12 +156,13 @@ Vector<float> cpu_vec;  // 默认是 Device::Cpu
 ```cpp
 comp class CustomPtr<type T> {
     T* ptr_;
-    
+
+public:
     // 构造函数
-    CustomPtr(T* p = nullptr) : ptr_(p) {}
+    explicit CustomPtr(T* p = nullptr) noexcept : ptr_(p) {}
     
     // 析构函数
-    ~CustomPtr() {
+    ~CustomPtr() noexcept {
         if (ptr_) {
             delete ptr_;
         }
@@ -161,8 +173,17 @@ comp class CustomPtr<type T> {
     CustomPtr& operator=(const CustomPtr&) = delete;
     
     // 移动构造
-    CustomPtr(CustomPtr&& other) : ptr_(other.ptr_) {
+    CustomPtr(CustomPtr&& other) noexcept : ptr_(other.ptr_) {
         other.ptr_ = nullptr;
+    }
+
+    CustomPtr& operator=(CustomPtr&& other) noexcept {
+        if (this != &other) {
+            delete ptr_;
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
+        return *this;
     }
     
     // 成员函数
@@ -176,61 +197,35 @@ CustomPtr<User> p(new User{1, "Alice"});
 println("{}", p->name);
 ```
 
-### 内存池分配器示例
+此示例仅管理单个对象，要求 T 的析构不抛异常。裸指针成员不会让编译器自动
+识别独占资源；删除拷贝、提供移动和清空源指针都由类作者按 C++ 规则实现。
 
-```cpp
-comp class MemoryPool<type T> {
-    struct Block {
-        T data;
-        Block* next;
-    };
-    
-    Block* free_list_;
-    Vector<void*> allocated_chunks_;
-    size_t chunk_size_;
-    
-    MemoryPool(size_t chunk_size = 1024) 
-        : free_list_(nullptr), chunk_size_(chunk_size) 
-    {
-        allocate_chunk();
-    }
-    
-    ~MemoryPool() {
-        for (auto chunk : allocated_chunks_) {
-            free(chunk);
-        }
-    }
-    
-    T* allocate() {
-        if (!free_list_) {
-            allocate_chunk();
-        }
-        Block* block = free_list_;
-        free_list_ = block->next;
-        return new (&block->data) T();
-    }
-    
-    void deallocate(T* ptr) {
-        ptr->~T();
-        Block* block = reinterpret_cast<Block*>(ptr);
-        block->next = free_list_;
-        free_list_ = block;
-    }
-    
-private:
-    void allocate_chunk() {
-        void* chunk = malloc(chunk_size_ * sizeof(Block));
-        allocated_chunks_.push(chunk);
-        
-        Block* blocks = static_cast<Block*>(chunk);
-        for (size_t i = 0; i < chunk_size_ - 1; ++i) {
-            blocks[i].next = &blocks[i + 1];
-        }
-        blocks[chunk_size_ - 1].next = free_list_;
-        free_list_ = blocks;
-    }
-};
-```
+### 内存池复用通用原语
+
+`MemoryPool<T>` 与 Vector 使用同一份核心库 comp 生成器
+`StorageOps<T, Device::Cpu>`。生成器选择类型操作，运行时池对象才分配和构造，
+不再用 `T data` 的假对象加指针重解释来拼接空闲链表。
+
+实际存储由块记录组成：每块持有原始存储、独立的空闲槽位索引和活动位图。
+原始槽位没有活动 T，只有构造成功后才设置活动位。池拥有全部块以及尚未归还的
+活动对象；本设计不支持拷贝或移动池，避免转移时误共享资源。
+
+1. 创建池时拒绝零 chunk_size，并检查容量乘法溢出。只有 `allocate()` 的默认
+   构造路径要求 T 可默认构造；带参数的 `emplace(args...)` 不要求默认构造。
+2. 新块通过 `Ops::allocate_raw(chunk_size)` 分配并满足 `alignof(T)`；
+   块记录、位图或空闲索引建立失败时，RAII 临时记录释放尚未提交的全部资源。
+3. 取得空闲槽位后，调用 `Ops::construct_at`。构造成功才标记活动并移出空闲表；
+   构造抛异常则槽位仍为空闲，异常向调用方传播。
+4. 归还时定位所属块和槽位，对活动对象调用 `Ops::destroy_at`，清除活动位并
+   放回空闲表。块归属查询由池显式维护，不用已被删除的指针转换关键字。
+5. 池析构时按活动位图销毁所有未归还对象，再逐块调用 `Ops::release_raw`；
+   已归还槽位不能再次析构。要求 T 的析构不抛异常。
+6. 归还参数必须是该池当前活动对象的地址，不能传入内部子对象、其他池对象或
+   重复归还。此为库 API 前置条件，不引入全局裸指针所有权推断。
+
+`allocate`、`emplace` 和 `deallocate` 是生成类型的普通运行时成员函数。
+这里给出块与槽位算法，具体索引容器可用现有 Vector 实现；其元素寿命与异常
+保证必须遵循 [通用容器原语](03-memory.md#通用容器原语)。
 
 ### 与 `comp type` 的区别
 
@@ -241,6 +236,10 @@ private:
 | 成员函数 | 通过反射 API 注入 | 直接定义 |
 | 类型参数使用 | 通过 `^^T` 引用 | 直接使用 `T` |
 | 适用场景 | 编译期代码生成、简单数据结构 | 复杂内存管理、运算符重载、RAII |
+
+两种写法最终都降低为公开的 `define_class` 描述和普通类定义：`comp type`
+适合只生成布局，`comp class` 适合直接书写成员实现。二者没有不同的生命周期
+或优化语义；需要资源管理时都必须生成或绑定明确的构造、析构、拷贝和移动操作。
 
 ### 何时使用 `comp class`
 
@@ -258,21 +257,21 @@ private:
 
 ### 核心容器类型
 
-`Vector<T, Device>`, `String`, `HashMap<K, V>` 等核心容器是**编译器内置类型**，
-使用与 `comp class` 相同的实现机制，但由编译器直接提供，享有特殊优化：
+`Vector<T, Device>`, `String`, `HashMap<K, V>` 等核心容器是预定义的库实现，
+使用与 `comp class` 相同的公开生成机制和 `StorageOps`：
 
 - 支持 `Device` 参数（CPU/GPU 内存）
-- SIMD 向量化优化
-- GPU 内核生成
+- 使用公开的类型属性触发 SIMD、GPU 和内存优化
 - 与反射系统深度集成
 
-用户自定义的 `comp class` 类型与核心容器类型地位平等，编译器对待方式一致。
+用户自定义的 `comp class` 类型与核心容器使用相同的生成 API；编译器不得按
+类型名称授予特殊语义，只能依据公开的类型属性和调用契约优化。
 
 ## 变参泛型
 
 ```cpp
 // 类型参数包（... 是 C++26 已有语法）
-comp fn log<type... Args>(args: Args...) {
+comp void log<type... Args>(Args... args) {
     // 用反射遍历参数包
     for (auto arg : {args...}) {
         println("{}", arg);

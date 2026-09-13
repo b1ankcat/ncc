@@ -99,8 +99,11 @@ VarDecl
 - 聚合初始化 → 字段赋值序列
 - for 循环 → while 循环
 - 运算符重载 → 函数调用
-- match 表达式 → switch 语句
 ```
+
+`match(value, handler...)` 按普通函数调用解析，绑定到库中的 comp 函数。
+穷尽检查和分发代码生成由该函数通过公开的 comp/反射能力完成；编译器不设置
+专用 match AST 节点。生成的枚举分发与用户写出的同等控制流使用相同的降低规则。
 
 ### 4. Type Checking + Comp Execution
 
@@ -130,30 +133,13 @@ VarDecl
 
 **依赖图分析：**
 
-```rust
-// 伪代码：检测 comp 函数依赖
-fn resolve_comp_dependencies() {
-    let mut worklist = all_comp_functions();
-    let mut resolved = HashSet::new();
-    
-    while !worklist.is_empty() {
-        let progress = false;
-        
-        for comp_fn in worklist.iter() {
-            if can_execute(comp_fn, &resolved) {
-                execute_comp(comp_fn);
-                resolved.insert(comp_fn);
-                worklist.remove(comp_fn);
-                progress = true;
-            }
-        }
-        
-        if !progress {
-            // 检测到循环依赖
-            report_cyclic_comp_dependency(worklist);
-        }
-    }
-}
+```text
+依赖调度算法（非 NCC 源代码）：
+1. 初始化待执行集合与已完成集合。
+2. 从待执行集合中取出依赖已满足的操作，构成当前批次。
+3. 执行当前批次，将完成项移入已完成集合。
+4. 若待执行项尚存但没有可执行批次，报告未解决依赖或循环依赖。
+5. 重复上述过程，直到待执行集合为空。
 ```
 
 ### 5. MLIR 代码生成
@@ -176,7 +162,7 @@ ncc.parallel<gpu> (%i : index) in [0, %n) {
 
 // Tagged enum
 %shape = ncc.tagged_enum.create @Shape::Circle(%radius) : !ncc.enum<Shape>
-ncc.match %shape {
+ncc.tagged_enum.dispatch %shape {
     @Circle(%r) => { ... },
     @Rect(%w, %h) => { ... },
     @Point => { ... }
@@ -190,6 +176,9 @@ ncc.try {
     ...
 }
 ```
+
+`ncc.tagged_enum.dispatch` 仅表示生成后的枚举分发语义，不是源语言的 match
+语法，也不依赖被调用函数的名字；用户生成的同等枚举分发同样可以使用此 IR。
 
 #### 方言降低（Dialect Lowering）
 
@@ -274,7 +263,7 @@ llvm.func @process() {
 ### GPU Dialect 使用
 
 ```mlir
-// parallel<Device::Gpu>(n, [data](size_t i) { data[i] = i * 2; })
+// parallel<Device::Gpu>(n, [view](size_t i) { view[i] = i * 2; })
 
 module {
     // GPU kernel
@@ -285,13 +274,13 @@ module {
             %bid = gpu.block_id x
             %bdim = gpu.block_dim x
             
-            %i = arith.addi %tid, %bid : index
-            %i2 = arith.addi %i, %bdim : index
+            %base = arith.muli %bid, %bdim : index
+            %i = arith.addi %base, %tid : index
             
-            %in_range = arith.cmpi slt, %i2, %n : index
+            %in_range = arith.cmpi ult, %i, %n : index
             scf.if %in_range {
-                %val = arith.muli %i2, %c2 : i32
-                memref.store %val, %data[%i2] : memref<?xi32>
+                %val = arith.muli %i, %c2 : i32
+                memref.store %val, %data[%i] : memref<?xi32>
             }
             gpu.return
         }
@@ -302,7 +291,8 @@ module {
         %data = memref.alloc() : memref<?xi32>
         %data_gpu = gpu.memcpy %data, host_to_device
         
-        %grid_dim = arith.divui %n, %c256
+        // n == 0 时跳过 kernel；否则向上取整，覆盖尾部元素
+        %grid_dim = arith.ceildivui %n, %c256 : index
         %block_dim = %c256
         
         gpu.launch_func @kernels::@kernel_parallel

@@ -11,6 +11,8 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 
 ## 文档结构
 
+本索引按当前目录中的实际文件维护；不存在的草案编号不作为链接。
+
 ### 基础概念
 
 - **[00-overview.md](00-overview.md)** - 核心理念与设计原则
@@ -26,21 +28,23 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 - **[02-types.md](02-types.md)** - 类型系统
   - 基础类型（包含 AI/ML 低精度类型）
   - 字符串设计（UTF-8 + COW + SSO）
+  - UTF-8 错误策略和 64 位目标边界
   - Tagged enum（携带数据的枚举）
+  - 先构造后交换的异常安全赋值
   - Optional 类型
 
 ### 核心机制
 
 - **[03-memory.md](03-memory.md)** - 内存管理
   - 聚合初始化 + 构造函数（RAII）
-  - Rule of Zero（默认拷贝，move 显式化）
-  - 智能指针（unique_ptr/shared_ptr/weak_ptr）
+  - C++ 特殊成员函数规则：资源封装定义所有权操作，组合类型优先 Rule of Zero
+  - 智能指针（unique_ptr/shared_ptr/weak_ptr）与 make_unique/make_shared 工厂
   - 引用和指针（标准 C++ 语义）
 
 - **[04-reflection.md](04-reflection.md)** - 反射系统
-  - 统一的反射 API（无"静态/动态"之分）
-  - 编译期代码生成
-  - 多态对象的运行时类型查询
+  - 统一的反射句柄（Info）
+  - 编译期代码生成运行时元数据和访问器
+  - 运行时类型、字段和方法查询/调用
 
 - **[05-comp.md](05-comp.md)** - comp 编译期计算
   - `comp` 关键字（替代 constexpr/consteval）
@@ -58,7 +62,9 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - 接口与反射结合
 
 - **[08-concurrency.md](08-concurrency.md)** - 并发与多线程
-  - 轻量级任务（Goroutine 风格）
+  - 结构化轻量级任务（M:N 调度）
+  - 结构化任务作用域、显式 join/取消和通道关闭
+  - GPU 捕获的设备可传输性检查
   - 通道与 Select
   - 结构化并发
   - GPU 并行与异构计算
@@ -66,24 +72,30 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
 
 ### 工具链
 
-- **[09-compiler.md](09-compiler.md)** - 编译器架构
-  - C99 后端（第一阶段）
-  - LLVM 后端（第二阶段）
+- **[09-gpu.md](09-gpu.md)** - GPU 与异构计算
+  - DeviceView 与设备可传输性
+  - CUDA/ROCm/OneAPI 目标
+
+- **[11-compiler.md](11-compiler.md)** - 编译器架构
+  - MLIR/LLVM 后端
   - 增量编译与并行编译
   - 错误报告
 
 - **[10-packages.md](10-packages.md)** - 包管理系统
   - package.toml 配置
-  - 依赖解析（MVS 算法）
+  - 依赖解析（约束交集 + 最低可用版本）
   - 全局缓存（内容寻址）
   - 循环依赖和幽灵依赖处理
   - ccc 命令行工具
 
 - **[11-build-system.md](11-build-system.md)** - 构建系统
-  - 构建脚本（build.ccc）
+  - 构建脚本（build.ncc）
   - 声明式与命令式 API
   - 编译配置与 Profiles
   - 代码生成与外部工具集成
+
+- **[12-interop.md](12-interop.md)** - C 互操作
+  - 显式 `extern "C"` ABI、目标 ABI 类型映射与回调
 
 ### 参考资料
 
@@ -100,12 +112,9 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - vs Zig：语法基线差异
   - 代码示例对比
 
-- **[14-summary.md](14-summary.md)** - 总结
-  - 核心价值
-  - 设计哲学
-  - 适用场景
-  - 开发路线图
-  - 贡献指南
+- **[13-performance.md](13-performance.md)** - 性能基准与优化
+  - 可重复 benchmark 目标
+  - CPU/GPU 优化与回归检测
 
 ## 核心特性速查
 
@@ -125,7 +134,7 @@ comp type Vector(type T) { /* ... */ }
 Vector<int32_t> v;  // <> 触发编译期调用 Vector(^^int32_t)
 
 // 泛型函数
-comp fn max<type T>(a: T, b: T) -> T {
+comp T max<type T>(T a, T b) {
     return a > b ? a : b;
 }
 ```
@@ -144,8 +153,8 @@ comp {
 ### 类型转换
 
 ```cpp
-auto file = cast<File>(writer);  // 返回 Optional<File>
-if (is<File>(writer)) { /* ... */ }
+auto file = cast<File&>(writer);  // 借用，返回 Optional<reference_wrapper<File>>
+if (is<File&>(writer)) { /* ... */ }
 ```
 
 ### 包管理
@@ -176,7 +185,7 @@ parse("{...}");
 3. **编译期优先**：能在编译期做的不拖到运行时
 4. **零成本抽象**：不为不用的功能付出代价
 5. **核心库与用户代码一致**：无特权，无魔法
-6. **标准 C++ 语义**：`T&`/`T*`/Rule of Zero 完全一致
+6. **标准 C++ 语义**：`T&`/`T*`/特殊成员函数完全一致
 
 ## 快速开始
 
@@ -205,13 +214,13 @@ ccc run
 - 掌握 03-memory.md 内存管理
 
 ### 3. 实战（1 周）
-- 阅读 10-examples.md 完整示例
-- 学习 09-packages.md 包管理
+- 阅读 12-examples.md 完整示例
+- 学习 10-packages.md 包管理
 - 实现一个小项目
 
 ### 4. 高级（持续）
-- 研究 08-compiler.md 编译器架构
-- 对比 11-comparison.md 与其他语言
+- 研究 11-compiler.md 编译器架构
+- 对比 13-comparison.md 与其他语言
 - 参与社区贡献
 
 ## 常见问题
@@ -230,7 +239,8 @@ NCC 没有借用检查器，与 C++ 一样依靠程序员保证内存安全。�
 
 ### 能和 C++ 代码互操作吗？
 
-可以。NCC 可以调用 C++ 库，也可以导出为 C++ 模块。
+NCC 直接支持显式 C ABI；C++ 库通过 `extern "C"` 包装层接入，详见
+[12-interop.md](12-interop.md)。
 
 ## 社区与支持
 

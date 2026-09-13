@@ -40,7 +40,7 @@ void process(Writer& w) {
 }
 
 // 堆上：标准 unique_ptr
-unique_ptr<Writer> writer(new File("out.txt"));
+unique_ptr<Writer> writer = make_unique<File>("out.txt");
 ```
 
 ## 接口与反射结合

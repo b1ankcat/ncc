@@ -1,6 +1,6 @@
 # 十三、性能基准与优化
 
-NCC 的性能目标：**与手写 C++ 性能差距在 5% 以内，GPU 代码尽力优化到最快。**
+NCC 的性能章节给出可重复 benchmark 目标，不构成所有程序的无条件保证。
 
 ## 性能目标
 
@@ -8,12 +8,12 @@ NCC 的性能目标：**与手写 C++ 性能差距在 5% 以内，GPU 代码尽�
 
 | 指标 | 目标 | 对比 |
 |------|------|------|
-| 冷编译 | < 5 秒/万行代码 | Go: ~2秒/万行, C++: ~20秒/万行 |
-| 增量编译 | < 1 秒（单文件修改） | Go: ~0.5秒, C++: ~3秒 |
+| 冷编译 | < 5 秒/万行代码 | 目标基线 |
+| 增量编译 | < 1 秒（单文件修改） | 目标基线 |
 | 并行度 | 接近线性扩展 | 8核约 7-8 倍速度 |
 | 缓存命中率 | > 90% | 跨项目共享全局缓存 |
 
-**编译速度定位：介于 Go（最快）和 C++（最慢）之间，目标是 Rust 级别。**
+**编译速度是目标指标，不构成对所有项目的保证。**
 
 ### 运行时性能
 
@@ -25,7 +25,8 @@ NCC 的性能目标：**与手写 C++ 性能差距在 5% 以内，GPU 代码尽�
 | 虚函数调用 | 零开销 | 虚表机制与 C++ 相同 |
 | 异常处理 | 零开销（无异常路径） | 与 C++ 异常相同 |
 
-**性能承诺：依赖 MLIR/LLVM 的优化能力，保证与 C++ 性能差距 ≤ 5%。**
+这些数值是目标基线，不是语言保证；必须在相同算法、数据、硬件、编译配置、预热
+和计时范围下与 C++ 对照验证。
 
 ### GPU 性能
 
@@ -42,12 +43,12 @@ NCC 的性能目标：**与手写 C++ 性能差距在 5% 以内，GPU 代码尽�
 
 | 指标 | 目标 | 对比 |
 |------|------|------|
-| 任务创建开销 | < 1 μs | Go goroutine: ~0.5μs |
-| Channel 吞吐量 | > 10M ops/s | Go channel: ~20M ops/s |
+| 任务创建开销 | < 1 μs | 目标基线 |
+| Channel 吞吐量 | > 10M ops/s | 目标基线 |
 | 上下文切换 | < 100 ns | 用户态调度 |
-| 百万级并发 | ✅ 支持 | 类似 Go |
+| 百万级并发 | 目标：支持 | 任务容量测试 |
 
-**并发定位：接近 Go 的性能，用户态调度 + 工作窃取。**
+**并发性能以统一 benchmark 测量为准。**
 
 ## MLIR 优化 Pass
 
@@ -147,14 +148,14 @@ gpu.launch blocks(%bx) threads(%tx) {
 import benchmark;
 
 // 定义 benchmark
-benchmark("vector_push", []() {
+benchmark::register_case("vector_push", []() {
     Vector<int32_t> v;
     for (int i = 0; i < 10000; ++i) {
         v.push(i);
     }
 });
 
-benchmark("string_concat", []() {
+benchmark::register_case("string_concat", []() {
     String s;
     for (int i = 0; i < 1000; ++i) {
         s += "x";
@@ -163,7 +164,7 @@ benchmark("string_concat", []() {
 
 // 运行
 int main() {
-    run_benchmarks();
+    benchmark::run_all();
 }
 ```
 
@@ -212,8 +213,8 @@ benchmark("gpu_saxpy", []() {
     Vector<float, Device::Gpu> x(n), y(n);
     float a = 2.5f;
     
-    parallel<Device::Gpu>(n, [=](size_t i) {
-        y[i] = a * x[i] + y[i];
+    parallel<Device::Gpu>(n, [x_view = x.view(), y_view = y.view(), a](size_t i) {
+        y_view[i] = a * x_view[i] + y_view[i];
     });
     
     gpu::synchronize();  // 等待完成
@@ -366,26 +367,23 @@ Investigate vector_push performance drop.
 ### 1. 避免不必要的拷贝
 
 ```cpp
-// ✗ 差：不必要的拷贝
+// 返回具名局部对象：允许 NRVO，否则按标准返回规则移动
 Vector<Data> get_data() {
     Vector<Data> v;
     // ... 填充 v
-    return v;  // 可能触发拷贝
+    return v;  // 不写 move(v)，保留 NRVO 的机会
 }
 
-// ✓ 好：RVO (Return Value Optimization)
-Vector<Data> get_data() {
-    Vector<Data> v;
-    // ... 填充 v
-    return v;  // 编译器优化为零拷贝
-}
-
-// ✓ 更好：预分配
+// 需要复用调用方已有缓冲区时，可使用输出参数
 void get_data(Vector<Data>& out) {
     out.reserve(expected_size);
     // ... 填充 out
 }
 ```
+
+具名局部对象的 NRVO 不是强制保证；未发生 NRVO 时，符合条件的返回表达式
+按 C++ 规则选择移动或拷贝操作。Vector 的移动由容器实现，`move()` 本身不
+执行资源转移。输出参数适用于已有缓冲区复用，并非普遍优于返回值。
 
 ### 2. 使用视图避免拷贝
 
@@ -437,18 +435,18 @@ Vector<float> v(1024);  // 内部数据自动对齐
 ```cpp
 // ✗ 差：多次内存传输
 auto gpu_data = cpu_data.to_device();
-parallel<Device::Gpu>(n, [gpu_data](size_t i) { /* ... */ });
+parallel<Device::Gpu>(n, [view = gpu_data.view()](size_t i) { /* ... */ });
 auto result1 = gpu_data.to_host();  // 传输 1
 
 gpu_data = result1.to_device();
-parallel<Device::Gpu>(n, [gpu_data](size_t i) { /* ... */ });
+parallel<Device::Gpu>(n, [view = gpu_data.view()](size_t i) { /* ... */ });
 auto result2 = gpu_data.to_host();  // 传输 2
 
 // ✓ 好：批量处理，减少传输
 auto gpu_data = cpu_data.to_device();
 
-parallel<Device::Gpu>(n, [gpu_data](size_t i) { /* 操作 1 */ });
-parallel<Device::Gpu>(n, [gpu_data](size_t i) { /* 操作 2 */ });
+parallel<Device::Gpu>(n, [view = gpu_data.view()](size_t i) { /* 操作 1 */ });
+parallel<Device::Gpu>(n, [view = gpu_data.view()](size_t i) { /* 操作 2 */ });
 
 auto result = gpu_data.to_host();  // 只传输一次
 ```
