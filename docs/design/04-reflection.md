@@ -1,11 +1,15 @@
 # 四、反射：统一的一套 API
 
-反射使用统一的 `Info` 句柄，同时支持编译期生成和运行时查询。`comp` 只在
-编译期执行：它读取静态类型信息，生成只读运行时描述符、字段访问器和方法桥接
-函数。程序运行时通过 `dynamic_type_of` 取得描述符并查询对象的类型、字段和方法；
-运行时不会执行 `comp`，也不会生成新类型。
+反射分为**类型反射**和**表达式反射**两个维度，分别使用 `TypeInfo` 和 `ExprInfo` 
+句柄。`comp` 只在编译期执行：它读取静态类型信息和表达式结构，生成只读运行时
+描述符、字段访问器和方法桥接函数。程序运行时通过 `dynamic_type_of` 获取描述符
+并查询对象的类型、字段和方法；运行时不会执行 `comp`，也不会生成新类型。
 
-## 核心能力
+**`^^` 运算符的重载语义**：
+- 应用于类型 → `TypeInfo`：`^^int32_t`、`^^User`
+- 应用于表达式 → `ExprInfo`：`^^(a + b)`、`^^(obj.field)`
+
+## 类型反射（TypeInfo）
 
 ```cpp
 struct User {
@@ -30,34 +34,34 @@ comp {
 }
 ```
 
-`Info` 是反射信息的统一载体，可以是编译期反射值或运行时类型描述符的轻量句柄。
-`fields_of`、`methods_of`、`bases_of`、`name_of` 和 `type_of` 在两种上下文中
-使用同一组名称；`nonstatic_data_members_of` 只用于编译期生成场景。
+`TypeInfo` 是类型反射信息的统一载体，可以是编译期反射值或运行时类型描述符的
+轻量句柄。`fields_of`、`methods_of`、`bases_of`、`name_of` 和 `type_of` 在
+两种上下文中使用同一组名称；`nonstatic_data_members_of` 只用于编译期生成场景。
 
 运行时通过 `get_field`、`set_field` 和 `invoke` 访问对象；函数检查类型、权限、
 参数数量、参数类型和可写性，失败返回空值或抛出标准异常，不能产生未定义行为。
 
 ```cpp
 // object 必须是已注册的多态类型；T 由调用处静态推导，函数取其动态类型
-comp Info dynamic_type_of<type T>(const T& object);
+comp TypeInfo dynamic_type_of<type T>(const T& object);
 
-Vector<Info> fields_of(Info type);
-Vector<Info> methods_of(Info type);
-Optional<Any> get_field(const void* object, Info field);
-void set_field(void* object, Info field, Any value);
-Optional<Any> invoke(const void* object, Info method, Vector<Any> arguments);
+Vector<TypeInfo> fields_of(TypeInfo type);
+Vector<TypeInfo> methods_of(TypeInfo type);
+Optional<Any> get_field(const void* object, TypeInfo field);
+void set_field(void* object, TypeInfo field, Any value);
+Optional<Any> invoke(const void* object, TypeInfo method, Vector<Any> arguments);
 ```
 
 ### `Any`：运行时值容器
 
 `get_field` 和 `invoke` 处理的类型只有运行时才确定，因此用核心库的 `Any`
-承载值。`Any` 持有一个类型擦除的值及其 `Info`：
+承载值。`Any` 持有一个类型擦除的值及其 `TypeInfo`：
 
 ```cpp
 class Any {
 public:
     Any();                             // 空值
-    Info type() const;                 // 持有值的类型；空值返回空 Info
+    TypeInfo type() const;             // 持有值的类型；空值返回空 TypeInfo
 
     bool has_value() const;
     explicit operator bool() const;
@@ -71,8 +75,8 @@ comp Optional<T> cast<type T>(const Any& value);
 只能移动进出 `Any`。从 `Any` 取值统一使用已有的 `cast<T>`，不引入第二套
 取值 API。
 
-`^^T` 得到编译期 `Info`，可用于 `splice` 和代码生成；`dynamic_type_of` 得到
-运行时 `Info`，可用于查询和访问，但不能用于 `splice`、定义新类型或生成新方法。
+`^^T` 得到编译期 `TypeInfo`，可用于 `splice` 和代码生成；`dynamic_type_of` 得到
+运行时 `TypeInfo`，可用于查询和访问，但不能用于 `splice`、定义新类型或生成新方法。
 多态类型必须在编译期注册；未注册类型返回空结果或抛出明确异常。
 
 ## 编译期生成运行时访问器
@@ -124,7 +128,7 @@ lambda 类型可以被反射，用于分析捕获列表和签名：
 
 ```cpp
 // 反射 lambda 捕获列表
-comp auto captures = captures_of(^^Lambda);  // 返回 Vector<Info>
+comp auto captures = captures_of(^^Lambda);  // 返回 Vector<TypeInfo>
 
 for (auto capture : captures) {
     auto capture_type = type_of(capture);
@@ -146,8 +150,8 @@ comp bool is_gpu_safe(type Lambda) {
 
 **Lambda 反射 API：**
 
-- `captures_of(^^Lambda)` → `Vector<Info>` - 返回所有捕获的变量
-- `type_of(capture)` → `Info` - 捕获变量的类型
+- `captures_of(^^Lambda)` → `Vector<TypeInfo>` - 返回所有捕获的变量
+- `type_of(capture)` → `TypeInfo` - 捕获变量的类型
 - `capture_mode_of(capture)` → `CaptureMode` - 捕获模式（值或引用）
 - `name_of(capture)` → `String` - 捕获变量的原始名称
 
@@ -215,7 +219,7 @@ Vector 类生成必须包含以下实际操作，生命周期的唯一规范见
 ## 多态对象的运行时类型查询
 
 通过基类指针/引用拿到的多态对象，其具体类型只能在运行时确定。使用同一套
-`Info` 查询函数读取描述符；运行时字段和方法访问使用 `get_field`、`set_field`
+`TypeInfo` 查询函数读取描述符；运行时字段和方法访问使用 `get_field`、`set_field`
 和 `invoke`。这不是第二套反射语法，也不会把运行时类型重新变成编译期类型：
 
 ```cpp
@@ -228,14 +232,14 @@ class Circle : public Shape { double radius; };
 class Rect : public Shape { double w; double h; };
 
 comp {
-    // 只需要为参与多态分发的类型登记，登记后才能在运行时反解出 Info
+    // 只需要为参与多态分发的类型登记，登记后才能在运行时反解出 TypeInfo
     for (auto T : types_deriving_from(^^Shape)) {
         register_dynamic_type(T);
     }
 }
 
 void print_kind(const Shape& s) {
-    Info T = dynamic_type_of(s);   // 唯一"运行时才能确定"的一步
+    TypeInfo T = dynamic_type_of(s);   // 唯一"运行时才能确定"的一步
 
     println("Concrete type: {}", name_of(T));   // 之后完全是同一套反射 API
     for (auto field : fields_of(T)) {
@@ -248,4 +252,300 @@ void print_kind(const Shape& s) {
 **实现原理：** `register_dynamic_type` 在编译期把具体子类的描述符存进类型表；
 `dynamic_type_of` 在运行时通过虚表关联信息取得描述符。描述符包含由编译期生成
 的字段访问器和方法桥接函数，因此 `invoke` 无需动态生成代码。动态库卸载前必须
-保证没有悬空 `Info` 句柄。
+保证没有悬空 `TypeInfo` 句柄。
+
+## 表达式反射（ExprInfo）
+
+表达式反射提供**类型检查后的 AST 级访问**，保留源代码的语法结构，同时附加语义信息
+（类型、重载决议结果）。这用于增强诊断、DSL 嵌入和元编程。
+
+### 基本用法
+
+```cpp
+comp {
+    int32_t a = 10, b = 20;
+    
+    ExprInfo expr = ^^(a + b * 2);
+    
+    println("Expression kind: {}", expr_kind(expr));     // ExprKind::BinaryOp
+    println("Type: {}", name_of(type_of(expr)));         // "int32_t"
+    println("Operator: {}", binary_operator(expr));      // Operator::Plus
+    println("Stringified: {}", stringify(expr));         // "a + b * 2"
+}
+```
+
+### ExprKind 枚举
+
+```cpp
+enum class ExprKind {
+    // 基础表达式
+    Literal,        // 字面量：42, "hello", true
+    Variable,       // 变量引用：x, y
+    
+    // 一元运算
+    UnaryOp,        // 一元运算：-x, !b, *p, &x
+    
+    // 二元运算
+    BinaryOp,       // 二元运算：a + b, x > y, p && q
+    
+    // 调用
+    Call,           // 函数调用：func(a, b)
+    
+    // 成员访问
+    MemberAccess,   // 成员访问：obj.field, ptr->field
+    Subscript,      // 下标：arr[i]
+    
+    // 其他
+    Cast,           // 转换：cast<T>(value)
+    Ternary,        // 三元：cond ? a : b
+    Lambda,         // Lambda：[](int x) { return x + 1; }
+};
+```
+
+### Operator 枚举
+
+```cpp
+enum class Operator {
+    // 算术
+    Plus, Minus, Multiply, Divide, Modulo,
+    
+    // 比较
+    Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual,
+    
+    // 逻辑
+    LogicalAnd, LogicalOr, LogicalNot,
+    
+    // 位运算
+    BitwiseAnd, BitwiseOr, BitwiseXor, BitwiseNot,
+    LeftShift, RightShift,
+    
+    // 其他
+    AddressOf, Dereference, UnaryPlus, UnaryMinus,
+};
+```
+
+### 表达式查询 API
+
+**通用查询**：
+
+```cpp
+ExprKind expr_kind(ExprInfo expr);        // 表达式种类
+TypeInfo type_of(ExprInfo expr);          // 表达式的类型
+String stringify(ExprInfo expr);          // 转换为源代码字符串（用于诊断）
+```
+
+**字面量** (`ExprKind::Literal`)：
+
+```cpp
+comp Optional<Any> literal_value(ExprInfo expr);  // 获取字面量的值
+```
+
+**变量** (`ExprKind::Variable`)：
+
+```cpp
+String variable_name(ExprInfo expr);              // 变量名
+```
+
+**一元运算** (`ExprKind::UnaryOp`)：
+
+```cpp
+Operator unary_operator(ExprInfo expr);           // 运算符
+ExprInfo unary_operand(ExprInfo expr);            // 操作数
+```
+
+**二元运算** (`ExprKind::BinaryOp`)：
+
+```cpp
+Operator binary_operator(ExprInfo expr);          // 运算符
+ExprInfo binary_lhs(ExprInfo expr);               // 左操作数
+ExprInfo binary_rhs(ExprInfo expr);               // 右操作数
+```
+
+**调用** (`ExprKind::Call`)：
+
+```cpp
+ExprInfo callee(ExprInfo expr);                   // 被调用的函数表达式
+Vector<ExprInfo> arguments(ExprInfo expr);        // 实参列表
+Optional<FunctionInfo> resolved_callee(ExprInfo expr);  // 重载决议后的函数
+```
+
+**成员访问** (`ExprKind::MemberAccess`)：
+
+```cpp
+ExprInfo member_object(ExprInfo expr);            // 对象表达式
+String member_name(ExprInfo expr);                // 成员名
+Optional<FieldInfo> resolved_member(ExprInfo expr);  // 解析后的字段/方法
+```
+
+**下标** (`ExprKind::Subscript`)：
+
+```cpp
+ExprInfo subscript_array(ExprInfo expr);          // 数组表达式
+ExprInfo subscript_index(ExprInfo expr);          // 索引表达式
+```
+
+**三元运算** (`ExprKind::Ternary`)：
+
+```cpp
+ExprInfo ternary_condition(ExprInfo expr);        // 条件
+ExprInfo ternary_true_branch(ExprInfo expr);      // 真分支
+ExprInfo ternary_false_branch(ExprInfo expr);     // 假分支
+```
+
+**转换** (`ExprKind::Cast`)：
+
+```cpp
+TypeInfo cast_target_type(ExprInfo expr);         // 目标类型
+ExprInfo cast_operand(ExprInfo expr);             // 被转换的表达式
+```
+
+**编译期求值**（仅限编译期常量表达式）：
+
+```cpp
+comp Optional<Any> eval(ExprInfo expr);           // 求值表达式，返回结果
+```
+
+### 语义信息查询
+
+表达式反射不仅提供 AST 结构，还附加类型检查后的语义信息：
+
+```cpp
+// 表达式属性
+bool is_lvalue(ExprInfo expr);                    // 是否是左值
+bool is_constexpr(ExprInfo expr);                 // 是否是编译期常量
+bool is_noexcept(ExprInfo expr);                  // 是否不抛异常
+
+// 重载决议结果（调用表达式）
+Optional<FunctionInfo> resolved_callee(ExprInfo expr);
+
+// 成员解析结果（成员访问表达式）
+Optional<FieldInfo> resolved_member(ExprInfo expr);
+```
+
+### 使用示例
+
+**示例 1：增强的断言诊断**
+
+```cpp
+comp void check_impl(ExprInfo expr, SourceLocation loc = SourceLocation::current()) {
+    auto result = eval(expr);
+    
+    if (result.has_value() && cast<bool>(*result).value_or(false)) {
+        return;  // 检查通过
+    }
+    
+    // 失败：生成详细诊断
+    String message = format("Check failed at {}:{}\n  {}\n",
+        loc.file(), loc.line(), stringify(expr));
+    
+    // 递归打印子表达式的值
+    print_subexpr_values(expr, message);
+    
+    compile_error(message);
+}
+
+comp void print_subexpr_values(ExprInfo expr, String& out) {
+    if (expr_kind(expr) == ExprKind::BinaryOp) {
+        auto lhs = binary_lhs(expr);
+        auto rhs = binary_rhs(expr);
+        
+        if (auto lhs_val = eval(lhs)) {
+            out += format("    {} = {}\n", stringify(lhs), *lhs_val);
+        }
+        if (auto rhs_val = eval(rhs)) {
+            out += format("    {} = {}\n", stringify(rhs), *rhs_val);
+        }
+    }
+}
+
+// 使用
+comp {
+    int32_t x = -5;
+    check_impl(^^(x > 0));
+    // 编译错误：
+    // Check failed at test.ncc:42
+    //   x > 0
+    //     x = -5
+    //     0 = 0
+}
+```
+
+**示例 2：SQL DSL 生成**
+
+```cpp
+comp String generate_where_clause(ExprInfo filter) {
+    if (expr_kind(filter) == ExprKind::BinaryOp) {
+        auto op = binary_operator(filter);
+        auto lhs = binary_lhs(filter);
+        auto rhs = binary_rhs(filter);
+        
+        String op_str;
+        if (op == Operator::Equal) op_str = "=";
+        else if (op == Operator::Less) op_str = "<";
+        else if (op == Operator::Greater) op_str = ">";
+        else if (op == Operator::LogicalAnd) {
+            return format("({} AND {})",
+                generate_where_clause(lhs),
+                generate_where_clause(rhs));
+        }
+        
+        return format("{} {} {}",
+            translate_expr(lhs),
+            op_str,
+            translate_expr(rhs));
+    }
+    
+    if (expr_kind(filter) == ExprKind::MemberAccess) {
+        return member_name(filter);
+    }
+    
+    if (expr_kind(filter) == ExprKind::Literal) {
+        auto val = literal_value(filter);
+        return format("'{}'", *val);
+    }
+    
+    compile_error("Unsupported expression in SQL filter");
+}
+
+// 使用
+comp String sql = generate_where_clause(^^(user.age > 18 && user.active));
+// 结果：(age > '18' AND active = 'true')
+```
+
+**示例 3：表达式复杂度分析**
+
+```cpp
+comp int32_t expr_complexity(ExprInfo expr) {
+    if (expr_kind(expr) == ExprKind::Literal || 
+        expr_kind(expr) == ExprKind::Variable) {
+        return 1;
+    }
+    
+    if (expr_kind(expr) == ExprKind::BinaryOp) {
+        return 1 + expr_complexity(binary_lhs(expr)) 
+                 + expr_complexity(binary_rhs(expr));
+    }
+    
+    if (expr_kind(expr) == ExprKind::Call) {
+        int32_t cost = 10;  // 函数调用基础成本
+        for (auto arg : arguments(expr)) {
+            cost += expr_complexity(arg);
+        }
+        return cost;
+    }
+    
+    return 1;
+}
+
+comp {
+    auto complexity = expr_complexity(^^(a + b * func(c, d)));
+    println("Expression complexity: {}", complexity);  // 14
+}
+```
+
+### 限制
+
+1. **编译期上下文**：表达式反射只能在 `comp` 上下文中使用
+2. **求值限制**：`eval()` 只能求值编译期常量表达式
+3. **AST 稳定性**：表达式结构保证在语义等价的转换下稳定，但编译器优化可能简化 AST
+4. **运行时不可用**：`ExprInfo` 不能在运行时创建或查询（不同于 `TypeInfo` 的 `dynamic_type_of`）

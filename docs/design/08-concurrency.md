@@ -599,6 +599,90 @@ int32_t expected = 10;
 bool success = counter.compare_exchange_strong(expected, 20);
 ```
 
+### 内存模型
+
+NCC 的内存模型与并发语义**完全遵循 C++20 标准**（ISO/IEC 14882:2020）的第 6.9 节
+（Memory model）和第 33 节（Thread support library）。`Atomic<T>` 与 `MemoryOrder` 
+的语义等同于 `std::atomic<T>` 与 `std::memory_order`。
+
+**MemoryOrder 枚举值**：
+
+```cpp
+enum class MemoryOrder {
+    Relaxed,   // memory_order_relaxed：无同步，只保证原子性
+    Acquire,   // memory_order_acquire：acquire 语义
+    Release,   // memory_order_release：release 语义
+    AcqRel,    // memory_order_acq_rel：acquire + release
+    SeqCst,    // memory_order_seq_cst：顺序一致性（默认）
+};
+```
+
+**Happens-before 关系**：
+
+遵循 C++20 标准的定义：
+- 同一线程内的语句顺序执行形成 sequenced-before
+- Release 写同步到 Acquire 读
+- SeqCst 操作形成全局顺序
+- 传递闭包构成 happens-before
+
+**数据竞争**：
+
+两个操作构成数据竞争当且仅当：
+1. 访问同一内存位置
+2. 至少一个是写操作
+3. 至少一个不是原子操作
+4. 不存在 happens-before 关系
+
+数据竞争导致**未定义行为**，与 C++ 一致。
+
+**示例：Release-Acquire 同步**：
+
+```cpp
+Atomic<int32_t> flag{0};
+int32_t data = 0;
+
+// 线程 1（生产者）
+data = 42;                              // (1)
+flag.store(1, MemoryOrder::Release);    // (2) release
+
+// 线程 2（消费者）
+if (flag.load(MemoryOrder::Acquire) == 1) {  // (3) acquire
+    println("{}", data);                      // (4) 保证看到 42
+}
+```
+
+(2) 的 Release 与 (3) 的 Acquire 形成同步，(1) happens-before (4)。
+
+**GPU 内存模型扩展**：
+
+GPU kernel 内的内存操作默认使用 **Relaxed 内存顺序**。GPU 线程间没有隐式同步，
+需要显式使用原子操作或同步原语。
+
+CPU-GPU 边界的同步操作提供 **Acquire/Release 语义**：
+
+```cpp
+Vector<int32_t, Device::Gpu> data;
+
+// CPU 端写入
+data[0] = 42;
+auto done = data.to_device();  // Release 语义
+
+done.wait();  // Acquire 语义，保证 GPU 能看到写入
+
+// GPU kernel
+gpu::parallel_for(range, [=](int32_t i) {
+    // 能看到 CPU 写入的 42
+    int32_t val = data[0];
+});
+```
+
+GPU kernel 内的同步原语（`gpu::barrier()`、`gpu::atomic_add()` 等）遵循 GPU 
+架构的内存模型（CUDA/ROCm），详见 [GPU 章节](09-gpu.md#内存模型)。
+
+**参考资源**：
+- C++20 标准内存模型：ISO/IEC 14882:2020 §6.9
+- 原子操作库：ISO/IEC 14882:2020 §33
+
 ### RwLock - 读写锁
 
 ```cpp

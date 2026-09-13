@@ -414,3 +414,118 @@ ccc build --mlir-print-ir-module-scope --mlir-print-local-scope
 编译速度与生成代码性能的目标见
 [14-performance.md](14-performance.md#验收目标)。
 
+## 符号 Mangling 与 ABI
+
+NCC 采用 **Itanium C++ ABI** mangling 规则的扩展，保证与现有工具链（GCC、Clang、
+LLVM 调试器、链接器）的兼容性。
+
+### 基本规则
+
+1. **模块名编码为命名空间**：NCC 的模块在 mangling 中表示为 C++ 命名空间
+2. **核心库类型在全局命名空间**：`String`、`Vector` 等核心库符号不带模块前缀
+3. **泛型实例使用模板参数编码**：`Vector<int32_t>` 编码为模板实例化
+
+### 编码规则
+
+| NCC 符号 | Mangled Name | 说明 |
+|---------|--------------|------|
+| `geometry::Vec2` | `_ZN8geometry4Vec2E` | 模块名作为命名空间 |
+| `String` | `_Z6String` | 核心库类型，全局命名空间 |
+| `Vector<int32_t>` | `_Z6VectorIiE` | 泛型实例，`i` 是 `int32_t` |
+| `Vector<Vec2>` | `_Z6VectorIN8geometry4Vec2EE` | 嵌套：Vector<geometry::Vec2> |
+| `net.http::Client` | `_ZN3net4http6ClientE` | 嵌套模块（`.` → 两层） |
+
+### 类型参数编码
+
+遵循 Itanium ABI 的类型编码：
+
+| NCC 类型 | 编码 |
+|---------|------|
+| `int32_t` | `i` |
+| `int64_t` | `l` |
+| `uint32_t` | `j` |
+| `uint64_t` | `m` |
+| `float` | `f` |
+| `double` | `d` |
+| `bool` | `b` |
+| `String` | `6String` |
+| 指针 `T*` | `P<T编码>` |
+| 引用 `T&` | `R<T编码>` |
+
+### 函数签名编码
+
+```cpp
+// geometry.ncc
+export module geometry;
+export double distance(Vec2 a, Vec2 b);
+// mangled: _ZN8geometry8distanceENS_4Vec2ES0_
+
+// 泛型函数
+export comp T max<type T>(T a, T b);
+// 实例化 max<int32_t>
+// mangled: _ZN8geometry3maxIiEET_S0_S0_
+```
+
+### 跨模块实例化去重
+
+编译器为每个泛型实例生成唯一的 mangled name，链接器使用 **weak symbols** 自动合并：
+
+```cpp
+// moduleA.ncc 实例化 Vector<int32_t>
+// 生成符号：_Z6VectorIiE (weak)
+
+// moduleB.ncc 也实例化 Vector<int32_t>
+// 生成符号：_Z6VectorIiE (weak)
+
+// 链接时自动合并为一个符号
+```
+
+### ABI 稳定性
+
+**ABI 版本号**：编译器生成的对象文件包含 ABI 版本标记：
+
+```
+.section .ncc_abi_version
+.byte 1  // 主版本
+.byte 0  // 次版本
+```
+
+**兼容性规则**：
+- 主版本相同：二进制兼容
+- 主版本不同：不兼容，需要重新编译
+- Mangling 规则变化会增加主版本号
+
+**稳定性保证**：
+- 类型的物理布局（大小、对齐、字段偏移）
+- 函数调用约定
+- 异常处理机制
+- Mangled name 格式
+
+### 与 C++ 互操作
+
+NCC 的 mangling 兼容 C++，允许直接链接 C++ 对象文件：
+
+```cpp
+// C++ 库（编译为 .o）
+namespace geometry {
+    struct Vec2 { double x, y; };
+    double distance(Vec2 a, Vec2 b);
+}
+
+// NCC 代码可以直接链接并调用
+// mangled name 一致：_ZN8geometry8distanceENS_4Vec2ES0_
+```
+
+### Demangling
+
+使用标准 `c++filt` 工具解码：
+
+```bash
+$ echo "_ZN8geometry4Vec2E" | c++filt
+geometry::Vec2
+
+$ echo "_Z6VectorIiE" | c++filt
+Vector<int>
+```
+
+NCC 编译器提供 `ccc demangle` 命令，输出格式与 `c++filt` 一致。

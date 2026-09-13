@@ -25,8 +25,7 @@ comp struct Config {
 
 函数声明采用 `comp 返回类型 函数名<泛型参数>(普通参数)`，其中普通参数使用
 C++ 的 `类型 参数名` 写法；没有独立的 `fn` 关键字。类型参数列表属于总纲
-已批准的 comp 扩展；**求值与实例化的精确阶段划分尚未定稿**，见
-[未定稿部分](00-overview.md#文档结构)。
+已批准的 comp 扩展。求值与实例化的阶段划分见[求值阶段与实例化](#求值阶段与实例化)。
 
 下面的 `Vector` 只演示 `comp type` 的调用形式和布局生成，**不是核心库 Vector
 的真实定义**：真实 Vector 用 `define_class` + `StorageOps` 生成，并须满足
@@ -390,4 +389,206 @@ comp {
         }
     }
 }
+
+## 求值阶段与实例化
+
+### 两阶段名称查找（Two-phase lookup）
+
+comp 泛型函数中的名称分为两类，在不同阶段解析：
+
+| 名称类型 | 解析时机 | 使用的依赖闭包 |
+| --- | --- | --- |
+| **非依赖名称** | 定义时 | 定义处模块的依赖闭包 |
+| **依赖名称** | 实例化时 | 实例化点模块的依赖闭包 |
+
+**判断标准**：
+- 参数、局部变量的类型涉及类型参数 → 依赖
+- 调用的函数实参类型涉及类型参数 → 依赖（触发实参关联查找）
+- 直接使用类型参数本身 → 依赖
+- 其他 → 非依赖
+
+```cpp
+// utils.ncc
+export module utils;
+
+comp int32_t helper() { return 42; }
+
+export comp int32_t compute<type T>(T value) {
+    auto x = helper();        // 非依赖：定义时在 utils 的依赖闭包中解析
+    auto y = process(value);  // 依赖：实例化时在调用点的依赖闭包中解析
+    return x + y;
+}
+
+// main.ncc
+import utils;
+import geometry;  // 导出 Vec2 和 process(Vec2)
+
+comp int32_t result = utils::compute(Vec2{1, 2});
+// process(value) 在 main.ncc 实例化时解析，找到 geometry::process
+```
+
+这与 [模块系统的名称查找规则](01-modules.md#名称查找) 一致：实参关联查找发生在
+实例化点，使用该点的传递依赖闭包。
+
+### 实例化触发时机
+
+泛型类型和函数采用**延迟实例化**：只在需要完整定义时才触发。
+
+**触发实例化的情况**：
+
+```cpp
+comp class Container<type T> { T value; };
+comp void func<type T>() { /* ... */ }
+
+// ✓ 触发实例化（需要完整定义）
+Container<int32_t> c;              // 定义对象
+sizeof(Container<int32_t>);        // 查询大小
+func<int32_t>();                   // 调用泛型函数
+Container<int32_t>& r = c;         // 引用绑定需要完整类型
+
+// ✗ 不触发实例化（只需声明）
+Container<int32_t>* p;             // 指针声明
+Container<int32_t>& get_ref();     // 函数声明返回引用
+```
+
+成员函数的实例化独立于类实例化：
+
+```cpp
+comp class Widget<type T> {
+    T value;
+    void process() { /* ... */ }
+};
+
+Widget<int32_t> w;   // 实例化 Widget<int32_t> 类
+w.process();         // 此时才实例化 process()
+```
+
+### 递归深度限制
+
+编译期递归调用受深度限制保护，防止无限递归导致编译器崩溃或资源耗尽。
+
+**默认限制**：512 层递归
+
+```cpp
+comp int32_t factorial(int32_t n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+comp int32_t x = factorial(5);      // ✓ 5 层递归
+comp int32_t y = factorial(1000);   // ✗ 编译错误：超过递归深度限制
+```
+
+超过限制时编译器报错，错误消息包含调用栈以便调试：
+
+```
+error: comp recursion depth exceeded (limit: 512)
+  in instantiation of function 'factorial' at depth 512
+  call stack:
+    factorial(1000) -> factorial(999) -> ... -> factorial(488)
+```
+
+**调整限制**：编译器标志 `-fcomp-recursion-limit=N` 可调整限制（如 1024、2048），
+但过大的值可能导致编译器内存耗尽。
+
+### 求值上下文与时机
+
+**规则：标记为 `comp` 的函数总是在编译期求值**，无论调用上下文。
+
+```cpp
+comp int32_t compute() {
+    return 42;
+}
+
+comp int32_t x = compute();   // 编译期求值
+int32_t y = compute();        // 也在编译期求值，结果作为常量内联
+```
+
+**副作用**：comp 函数体内的副作用（如调用 `println`）在编译期发生：
+
+```cpp
+comp int32_t log_and_return(int32_t x) {
+    println("Computing: {}", x);  // 编译期输出
+    return x * 2;
+}
+
+comp int32_t a = log_and_return(5);  // 编译时输出 "Computing: 5"
+```
+
+**限制**：comp 函数不能执行编译期无法完成的操作：
+- 读写文件（除非在 `build.ncc` 中，见 [构建系统](11-build-system.md)）
+- 网络访问
+- 调用运行时才能确定的外部函数
+
+违反限制时编译器报错。
+
+### 顺序保证
+
+`comp` 块内的语句**按顺序求值**，与普通代码块一致：
+
+```cpp
+comp {
+    auto a = expr1();  // 第 1 步
+    auto b = expr2();  // 第 2 步（可能依赖 a）
+    auto c = expr3();  // 第 3 步（可能依赖 a 和 b）
+}
+```
+
+后续语句可以依赖前面语句的结果。这保证了代码生成和类型定义的确定性顺序。
+
+### 跨模块 comp 依赖
+
+comp 函数可以调用其他模块的 comp 函数：
+
+```cpp
+// moduleA.ncc
+export module moduleA;
+export comp int32_t get_size() { return 10; }
+
+// moduleB.ncc
+import moduleA;
+export comp int32_t array_size = moduleA::get_size();
+```
+
+**构建系统保证**：
+1. 编译 `moduleB` 前，`moduleA` 已完全编译
+2. `moduleA.ncc.meta` 包含 `get_size` 的完整 AST
+3. 编译器从 `.ncc.meta` 读取并求值 `get_size()`
+
+**循环依赖检测**：
+
+```cpp
+// moduleA.ncc
+import moduleB;
+export comp int32_t a = moduleB::b + 1;
+
+// moduleB.ncc
+import moduleA;
+export comp int32_t b = moduleA::a + 1;  // ✗ 编译错误：comp 依赖循环
+```
+
+编译器在求值 comp 常量时检测循环，报错并列出依赖链：
+
+```
+error: circular comp dependency detected
+  moduleA::a depends on moduleB::b
+  moduleB::b depends on moduleA::a
+```
+
+### 实例化缓存与增量编译
+
+编译器为每个 `<comp 函数, 类型参数>` 组合缓存生成的代码：
+
+```cpp
+// 第一次编译
+Vector<int32_t> v1;  // 实例化并缓存 Vector<int32_t>
+
+// 第二次编译（Vector 定义未变）
+Vector<int32_t> v2;  // 直接使用缓存
+```
+
+缓存位置：
+- 项目内：`target/.ccc-cache/`
+- 跨项目：`~/.ccc/cache/`（见 [包管理](10-packages.md#全局缓存结构)）
+
+增量编译时，只有依赖的 comp 定义改变时才重新实例化。
 ```
