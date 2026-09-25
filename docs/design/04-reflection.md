@@ -9,7 +9,15 @@
 - 应用于类型 → `TypeInfo`：`^^int32_t`、`^^User`
 - 应用于表达式 → `ExprInfo`：`^^(a + b)`、`^^(obj.field)`
 
+**`^^` 的使用规则**：
+- `^^Type` 可以在**任何上下文**中使用（comp 函数、普通函数、类成员等）
+- `^^(expr)` 只能在 **comp 上下文**中使用（编译期表达式反射）
+- `[: ... :]` splice 只能在 **comp 上下文**中使用（编译期代码生成）
+- `TypeInfo` 是普通值，可以自由传递、存储在容器中、作为参数/返回值
+
 ## 类型反射（TypeInfo）
+
+### 基本用法
 
 ```cpp
 struct User {
@@ -31,6 +39,55 @@ comp {
             name_of(type_of(field)),
             offset_of(field));
     }
+}
+```
+
+### `^^Type` 在任何上下文中使用
+
+`^^Type` 不限于 comp 上下文，可以在普通函数、类成员等任何地方使用：
+
+```cpp
+// 在普通函数中使用
+void print_type_info(TypeInfo t) {
+    println("Type: {}, Size: {}", name_of(t), size_of(t));
+}
+
+void example() {
+    print_type_info(^^int32_t);    // 允许！
+    print_type_info(^^String);
+    print_type_info(^^Vector<int32_t>);
+}
+
+// 在类成员中存储
+struct TypeRegistry {
+    Vector<TypeInfo> types;
+    
+    void register_type(TypeInfo t) {
+        types.push_back(t);
+    }
+};
+
+TypeRegistry registry;
+registry.register_type(^^User);
+registry.register_type(^^Order);
+
+// 在容器中存储
+Vector<TypeInfo> numeric_types = {
+    ^^int32_t, ^^int64_t, ^^float, ^^double
+};
+
+void print_numeric_sizes() {
+    for (auto T : numeric_types) {
+        println("{}: {} bytes", name_of(T), size_of(T));
+    }
+}
+
+// 作为返回值
+TypeInfo get_element_type(TypeInfo container) {
+    if (is_vector(container)) {
+        return element_type_of(container);
+    }
+    return TypeInfo{};  // 空类型
 }
 ```
 

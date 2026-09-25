@@ -11,8 +11,10 @@
    `comp { ... }` 块，用于顶层批量操作。`comp` 函数可以接受 `type T` 形式
    的类型参数（C++26 标准模板参数是 `typename T`，这里简化为 `type`），并
    通过 `<>` 语法调用——**`template` 关键字被彻底删除**，所有泛型机制统一
-   为 `comp` 函数 + 反射生成。`const` 保留其运行时不可变语义，和 C++ 完全
-   一致。
+   为 `comp` 函数 + 反射生成。`<>` 是 `()` 的语法糖：`Vector<int32_t>` 等价于
+   `Vector(^^int32_t)`。`comp class CustomPtr<type T>` 是纯语法糖，编译器自动
+   脱糖为 `comp type CustomPtr(type T)` 函数 + `define_class` 调用。底层只有
+   一个泛型机制。`const` 保留其运行时不可变语义，和 C++ 完全一致。
 2. **枚举携带数据**（tagged variant，如 `RGB(u8,u8,u8)`）——C++26 的
    `enum class` 不能携带数据，这里作为受限扩展单独说明。
 3. **`import` 关键字**（C++20 已有，但扩展用于包导入）—— 用于从 `package.toml`
@@ -26,8 +28,11 @@
 - **`comp` 声明与块**：允许 `comp` 修饰函数、类型和编译期常量，允许
   `comp { ... }` 块、`type` 类型参数/返回类型，以及声明中的泛型参数列表。
   泛型函数写作 `comp T max<type T>(T a, T b)`，泛型类写作
-  `comp class CustomPtr<type T>`。返回类型和普通参数声明沿用 C++ 写法，
-  不引入 `fn` 关键字或 `参数名: 类型` 语法。求值与实例化阶段在 comp 章节定义。
+  `comp class CustomPtr<type T>`（纯语法糖，脱糖为 `comp type` 函数）。
+  `<>` 是语法糖：`Vector<int32_t>` 等价于 `Vector(^^int32_t)`。返回类型和
+  普通参数声明沿用 C++ 写法，不引入 `fn` 关键字或 `参数名: 类型` 语法。
+  求值与实例化阶段在 comp 章节定义。`^^Type` 可在任何上下文使用，`^^(expr)`
+  和 `[: :]` 仅限 comp 上下文。
 - **Tagged enum**：允许枚举变体携带载荷及泛型枚举声明。每个变体具有可命名的
   载荷类型（如 `Shape::Circle`），支持按载荷声明顺序进行标准结构化绑定；
   无载荷变体对应空类型。载荷值可构造相应的枚举值。
@@ -112,7 +117,7 @@ comp/反射能力检查处理函数并生成分发代码，没有专用的词法
   保留（C++20 已有），因为它解决的是约束的**应用位置**（模板参数、函数签名），
   而 `comp bool` 函数解决的是约束的**定义**，两者职责不重叠。
 - **`template` 关键字删除**：所有泛型定义改用 `comp` 类型生成函数或泛型声明，通过
-  `<>` 语法调用时触发编译期代码生成。例如 `Vector<int32_t>` 等价于编译期调用
+  `<>` 语法调用时触发编译期代码生成。`<>` 是语法糖：`Vector<int32_t>` 等价于
   `Vector(^^int32_t)`，其中 `Vector` 是一个返回类型的 `comp` 函数。
 - **`co_await` 与 awaiter 协议删除**：保留 `co_yield` / `co_return` 用于惰性
   序列，删除 `co_await`、`await_ready` / `await_suspend` / `await_resume`、

@@ -418,6 +418,9 @@ logger.info("custom logger instance");
 
 ## comp class 的导出与实例化
 
+**注意**：`comp class` 是纯语法糖，编译器自动将其脱糖为 `comp type` 函数 + `define_class` 调用。
+详见 [comp 系统](05-comp.md#comp-class---泛型类定义语法糖)。以下讨论适用于所有 `comp` 泛型定义。
+
 ### 导出规则
 
 ```cpp
@@ -451,8 +454,13 @@ public:
     T* operator->() { return ptr_; }
 };
 
+// 等价的底层形式（编译器自动生成）
+export comp type CustomPtr(type T) {
+    return [: define_class("CustomPtr", { /* ... */ }) :];
+}
+
 // ✗ 不能只导出声明
-export comp class CustomPtr<type T>;  // 编译错误：comp class 必须包含完整定义
+export comp class CustomPtr<type T>;  // 编译错误：comp 泛型必须包含完整定义
 ```
 
 `CustomPtr` 仅示范拥有单个对象的指针封装，要求对象析构不抛异常。裸指针
@@ -460,14 +468,14 @@ export comp class CustomPtr<type T>;  // 编译错误：comp class 必须包含�
 
 **完整定义必须可见的原因：**
 
-- `comp class` 是编译期代码生成机制
-- 编译器需要在使用处看到完整的类体才能实例化
-- 模块元数据必须包含实例化所需的完整实现
+- `comp class` 脱糖为 `comp type` 函数，函数体必须可见才能调用
+- 编译器需要在使用处看到完整的实现才能生成实例化代码
+- 模块元数据必须包含实例化所需的完整 AST
 
 ### 实例化模型
 
 ```cpp
-// 模块 A：定义 comp class
+// 模块 A：定义 comp class（语法糖）
 export module containers;
 
 export comp class CustomPtr<type T> {
@@ -475,19 +483,26 @@ export comp class CustomPtr<type T> {
     // ... 完整实现
 };
 
-// 模块 B：使用 comp class
+// 底层等价于
+export comp type CustomPtr(type T) {
+    return [: define_class("CustomPtr", { /* ... */ }) :];
+}
+
+// 模块 B：使用 comp 泛型
 import containers;
 import user;
 
 int main() {
     // 编译器在此处实例化 CustomPtr<User>
-    CustomPtr<User> p(new User{1, "Alice"});
+    // 两种等价写法
+    CustomPtr<User> p1(new User{1, "Alice"});   // 语法糖
+    CustomPtr(^^User) p2(new User{2, "Bob"});   // 直接调用
 }
 ```
 
 **实例化流程：**
 
-1. **延迟实例化**：编译器在首次使用 `CustomPtr<User>` 时生成代码
+1. **延迟实例化**：编译器在首次使用 `CustomPtr<User>` 时调用 `CustomPtr(^^User)` 生成代码
 2. **符号去重**：链接器自动合并重复的实例化符号（使用 weak symbols）
 3. **增量缓存**：编译器缓存已实例化的类型，加速增量编译
 
@@ -495,7 +510,7 @@ int main() {
 
 每个模块编译后生成 `.ncc.meta` 文件，包含：
 
-- `comp class` 的完整 AST
+- `comp` 泛型定义的完整 AST（无论是 `comp class` 语法糖还是 `comp type` 函数）
 - 导出符号的类型签名
 - 依赖的其他模块列表
 

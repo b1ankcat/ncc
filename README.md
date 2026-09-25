@@ -58,7 +58,8 @@ int main() {
 | 编译期断言 | static_assert（消息只能是字面量） | **`comp_assert` / `compile_error`，消息可格式化** |
 | 文本替换 | 预处理器 | **删除，能力由 `comp` 承担** |
 | 类型转换 | 4 种 cast | **`cast<T>` 一个，语义由目标类型决定** |
-| 泛型 | `template<typename T>` | **`comp T f<type T>(T value)`** |
+| 泛型 | `template<typename T>` | **`comp T f<type T>(T value)` 或 `f(^^T)`** |
+| 泛型类 | `template<typename T> class` | **`comp class C<type T>` 语法糖，脱糖为 `comp type`** |
 | 类型约束 | concept | **`comp bool` 函数** |
 | 异步 | 协程 + 执行器 | **绿色线程；协程只用于惰性序列** |
 

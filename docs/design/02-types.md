@@ -193,6 +193,7 @@ String s = "Hello";  // 内部是 UTF-8 字节序列
 内置的 `Optional<T>`（语义等价 `std::optional`，去掉 `std::` 前缀）：
 
 ```cpp
+// 使用 comp class 语法糖定义（底层是 comp type 函数）
 comp class Optional<type T> {
 public:
     bool has_value() const;
