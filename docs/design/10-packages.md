@@ -83,21 +83,21 @@ version = 1
 [[package]]
 name = "http"
 version = "2.3.5"
-source = "registry+https://packages.ccc-lang.org"
+source = "registry+https://packages.ncc-lang.org"
 checksum = "sha256:a3f8b9c4d2e1f3b5c8a9d7e2f1c4b6a8..."
 dependencies = ["json"]
 
 [[package]]
 name = "json"
 version = "1.5.0"
-source = "registry+https://packages.ccc-lang.org"
+source = "registry+https://packages.ncc-lang.org"
 checksum = "sha256:7d2b4e1a9c8f5b3d2e9f1c7a4b6d8e2a..."
 dependencies = []
 
 [[package]]
 name = "log"
 version = "0.4.2"
-source = "registry+https://packages.ccc-lang.org"
+source = "registry+https://packages.ncc-lang.org"
 checksum = "sha256:9e1c3f5b7a2d8c4f1e6b9d3a7c5e2f8b..."
 features = ["json"]
 dependencies = ["json"]
@@ -209,7 +209,7 @@ help: refactor common interfaces into a separate base package:
 ## 全局缓存结构
 
 ```
-~/.ccc/
+~/.ncc/
   ├── cache/
   │   ├── registry/
   │   │   └── index.json                    # 包索引
@@ -313,40 +313,40 @@ println("{}", s);
 unique_ptr<Data> p = make_unique<Data>(...);
 ```
 
-## ccc 命令行工具
+## ncc 命令行工具
 
 ```bash
 # 创建新项目
-ccc new myapp
+ncc new myapp
 cd myapp
 
 # 添加依赖
-ccc add http@2.3
-ccc add json --features serde
+ncc add http@2.3
+ncc add json --features serde
 
 # 移除依赖
-ccc remove json
+ncc remove json
 
 # 更新依赖（重新解析版本）
-ccc update
+ncc update
 
 # 查看依赖树
-ccc tree
+ncc tree
 
 # 构建项目
-ccc build
+ncc build
 
 # 构建并运行
-ccc run
+ncc run
 
 # 测试
-ccc test
+ncc test
 
 # 清理缓存
-ccc clean
+ncc clean
 
 # 发布到注册中心
-ccc publish
+ncc publish
 ```
 
 ## 工作空间（Workspace）
@@ -389,5 +389,5 @@ log = "0.4.2"
 | 锁定文件 | go.sum | Cargo.lock | package-lock.toml |
 
 与 Cargo 的关键差异是取最低而非最新：新依赖加入不会静默升级既有传递依赖，
-代价是需要显式 `ccc update` 才能获得上游的修复版本。
+代价是需要显式 `ncc update` 才能获得上游的修复版本。
 

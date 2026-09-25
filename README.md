@@ -8,7 +8,7 @@ NCC 的哲学是：如果 c++ 只用一个语法来表示一个功能，没有�
 
 - **🎯 语法基线 = C++26**：只删不加，站在巨人肩膀上
 - **⚡ `comp` 统一编译期计算**：替代 constexpr/consteval/template
-- **🔍 内置反射**：统一的 `Info` 句柄，支持运行时类型、字段和方法查询/调用
+- **🔍 内置反射**：统一的 `TypeInfo` 和 `ExprInfo` 句柄，支持运行时类型、字段和方法查询/调用
 - **🧵 结构化并发**：TaskScope 统一数据并行、任务和 Channel 生命周期
 - **📦 包管理**：依赖解析、锁定文件和全局缓存
 - **🚀 快速编译**：MLIR/LLVM 后端 + 增量与全局缓存
@@ -66,14 +66,14 @@ int main() {
 
 ```bash
 # 安装（尚未发布，待实现）
-curl -sSf https://install.ccc-lang.org | sh
+curl -sSf https://install.ncc-lang.org | sh
 
 # 创建新项目
-ccc new myapp
+ncc new myapp
 cd myapp
 
 # 构建并运行
-ccc run
+ncc run
 ```
 
 ## 文档
@@ -85,7 +85,7 @@ ccc run
 - **[类型系统](docs/design/02-types.md)** - 基础类型、字符串、Tagged enum
 - **[内存管理](docs/design/03-memory.md)** - RAII、智能指针、Rule of Zero
 - **[反射系统](docs/design/04-reflection.md)** - 统一的反射 API
-  - `Info` 运行时类型句柄、字段/方法查询与动态调用
+  - `TypeInfo` 和 `ExprInfo` 运行时类型句柄、字段/方法查询与动态调用
 - **[comp 系统](docs/design/05-comp.md)** - 编译期计算与泛型
 - **[类型转换](docs/design/06-casting.md)** - `cast<T>` 统一转换
 - **[接口系统](docs/design/07-interfaces.md)** - 抽象基类 + 虚函数
@@ -141,8 +141,8 @@ ccc run
 
 ```bash
 # 克隆仓库
-git clone https://github.com/ccc-lang/ccc.git
-cd ccc
+git clone https://github.com/ncc-lang/ncc.git
+cd ncc
 
 # 构建（待实现）
 make build
@@ -157,7 +157,7 @@ MIT License - 详见 [LICENSE](LICENSE)
 
 ## 社区
 
-- **GitHub**: https://github.com/ccc-lang/ccc（待创建）
-- **文档**: https://docs.ccc-lang.org（待创建）
-- **论坛**: https://discuss.ccc-lang.org（待创建）
-- **Discord**: https://discord.gg/ccc-lang（待创建）
+- **GitHub**: https://github.com/ncc-lang/ncc（待创建）
+- **文档**: https://docs.ncc-lang.org（待创建）
+- **论坛**: https://discuss.ncc-lang.org（待创建）
+- **Discord**: https://discord.gg/ncc-lang（待创建）

@@ -239,7 +239,7 @@ benchmark("cpu_saxpy", []() {
 
 ```bash
 # 显示编译时间分解
-ccc build --time-trace
+ncc build --time-trace
 
 # 输出：
 # Parsing:           0.5s
@@ -255,13 +255,13 @@ ccc build --time-trace
 
 ```bash
 # 生成性能分析数据
-ccc build --profile
+ncc build --profile
 
 # 运行程序生成 perf 数据
 ./myapp
 
 # 查看热点函数
-ccc perf report
+ncc perf report
 ```
 
 ## 内存性能
@@ -335,14 +335,14 @@ jobs:
       - uses: actions/checkout@v2
       
       - name: Build
-        run: ccc build --release
+        run: ncc build --release
       
       - name: Run benchmarks
-        run: ccc bench --output=results.json
+        run: ncc bench --output=results.json
       
       - name: Compare with baseline
         run: |
-          ccc perf-compare \
+          ncc perf-compare \
             --baseline=main \
             --current=results.json \
             --threshold=5%

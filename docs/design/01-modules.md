@@ -40,7 +40,7 @@ int main() {
 | 智能指针 | `unique_ptr<T>`、`shared_ptr<T>`、`weak_ptr<T>`、`make_unique`、`make_shared` |
 | 值容器 | `Any` |
 | 输出与格式化 | `println`、`print`、`format`、`Logger`、`log_info`/`log_warn`/`log_error`、`LogLevel` |
-| 反射：句柄与语法 | `Info`、`^^`、`[: :]` |
+| 反射：句柄与语法 | `TypeInfo`、`ExprInfo`、`^^`、`[: :]` |
 | 反射：查询 | `name_of`、`type_of`、`size_of`、`alignment_of`、`offset_of`、`fields_of`、`methods_of`、`bases_of`、`nonstatic_data_members_of`、`variants_of`、`captures_of`、`capture_mode_of`、`CaptureMode` |
 | 反射：枚举作用域 | `types_of`、`functions_of`、`types_deriving_from`、`current_module` |
 | 反射：谓词 | `is_scalar`、`is_pointer`、`is_aggregate`、`is_device_view`、`derives_from`、`satisfies`、`has_annotation` |
@@ -502,7 +502,7 @@ int main() {
 **示例：**
 
 ```bash
-$ ccc build containers.ncc
+$ ncc build containers.ncc
 # 生成：
 #   containers.o       - 目标文件（不含 comp class 实例化代码）
 #   containers.ncc.meta - 元数据文件（包含完整 AST）
@@ -514,26 +514,26 @@ $ ccc build containers.ncc
 
 ```bash
 # 阶段 1：编译各模块（生成 .o 和 .ncc.meta）
-ccc build containers.ncc   # → containers.o + containers.ncc.meta
-ccc build user.ncc         # → user.o + user.ncc.meta
-ccc build main.ncc         # → main.o（包含实例化的 CustomPtr<User>）
+ncc build containers.ncc   # → containers.o + containers.ncc.meta
+ncc build user.ncc         # → user.o + user.ncc.meta
+ncc build main.ncc         # → main.o（包含实例化的 CustomPtr<User>）
 
 # 阶段 2：链接
-ccc link main.o containers.o user.o → main.exe
+ncc link main.o containers.o user.o → main.exe
 # 链接器自动去重重复的 CustomPtr<User> 符号
 ```
 
 **缓存优化：**
 
 ```bash
-target/.ccc-cache/
+target/.ncc-cache/
   ├── containers.CustomPtr_User.o      # CustomPtr<User> 的缓存
   ├── containers.CustomPtr_Product.o   # CustomPtr<Product> 的缓存
   └── ...
 ```
 
-项目内的编译缓存位于 `target/.ccc-cache/`，跨项目共享的包缓存位于
-`~/.ccc/cache/`（见 [包管理](10-packages.md#全局缓存结构)）。
+项目内的编译缓存位于 `target/.ncc-cache/`，跨项目共享的包缓存位于
+`~/.ncc/cache/`（见 [包管理](10-packages.md#全局缓存结构)）。
 
 编译器为每个 `<comp_class, 类型参数>` 组合缓存生成的代码，
 如果定义未改变，直接使用缓存，加速增量编译。

@@ -87,7 +87,7 @@ http = "2.3"
 - 生成二进制
 
 ```bash
-$ ccc build
+$ ncc build
    Compiling http v2.3.5
    Compiling myapp v1.0.0
     Finished in 3.2s
@@ -406,8 +406,8 @@ codegen = "0.5"
 
 ```
 1. 编译 build-dependencies
-   protobuf_compiler → ~/.ccc/cache/build/protobuf_compiler-3.0.o
-   codegen → ~/.ccc/cache/build/codegen-0.5.o
+   protobuf_compiler → ~/.ncc/cache/build/protobuf_compiler-3.0.o
+   codegen → ~/.ncc/cache/build/codegen-0.5.o
 
 2. 执行 build.ncc
    - 可以 import build-dependencies
@@ -514,7 +514,7 @@ comp {
 ### build.ncc 执行失败
 
 ```bash
-$ ccc build
+$ ncc build
 
 Running build.ncc...
 error: build script failed

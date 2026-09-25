@@ -113,7 +113,7 @@ comp String encode_json<type T>(const T& v) {
 ```
 
 `v.[:field:]` 是仅限编译期的成员 splice 语法，直接生成静态成员访问。运行时
-动态对象应使用 `get_field` 或 `invoke`，不能把运行时 `Info` 作为 splice 操作数。
+动态对象应使用 `get_field` 或 `invoke`，不能把运行时 `TypeInfo` 作为 splice 操作数。
 
 ## Lambda 类型的反射
 

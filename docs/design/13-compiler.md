@@ -354,26 +354,26 @@ src/models.ncc  → target/.ccc-cache/models.mlir → target/.ccc-cache/models.o
 
 ```bash
 # 默认编译（MLIR → LLVM IR → 机器码）
-ccc build
+ncc build
 
 # 输出 MLIR
-ccc build --emit-mlir
+ncc build --emit-mlir
 
 # 输出 LLVM IR
-ccc build --emit-llvm
+ncc build --emit-llvm
 
 # 输出汇编
-ccc build --emit-asm
+ncc build --emit-asm
 
 # 指定优化级别
-ccc build --opt-level=3
+ncc build --opt-level=3
 
 # GPU 目标
-ccc build --target=gpu-cuda
-ccc build --target=gpu-rocm
+ncc build --target=gpu-cuda
+ncc build --target=gpu-rocm
 
 # 查看优化 Pass
-ccc build --verbose-passes
+ncc build --verbose-passes
 ```
 
 ## 调试支持
@@ -382,10 +382,10 @@ ccc build --verbose-passes
 
 ```bash
 # 查看每个 Pass 后的 MLIR
-ccc build --mlir-print-ir-after-all
+ncc build --mlir-print-ir-after-all
 
 # 生成 Pass Pipeline 图
-ccc build --mlir-print-ir-module-scope --mlir-print-local-scope
+ncc build --mlir-print-ir-module-scope --mlir-print-local-scope
 ```
 
 ### Debug Info 生成
@@ -514,4 +514,4 @@ $ echo "_Z6VectorIiE" | c++filt
 Vector<int>
 ```
 
-NCC 编译器提供 `ccc demangle` 命令，输出格式与 `c++filt` 一致。
+NCC 编译器提供 `ncc demangle` 命令，输出格式与 `c++filt` 一致。

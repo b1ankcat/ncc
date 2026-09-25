@@ -121,8 +121,8 @@ export module test_framework;
 
 // 发现与生成在同一个 comp 上下文内完成：
 // comp 块之间不共享可变状态，跨块传递需要 comp 常量或函数返回值
-comp Vector<Info> discover_tests() {
-    Vector<Info> found;
+comp Vector<TypeInfo> discover_tests() {
+    Vector<TypeInfo> found;
     for (auto func : functions_of(^^current_module)) {
         if (name_of(func).starts_with("test_")) {
             found.push(func);
@@ -197,12 +197,12 @@ comp {
 
 // 运行时类型查询
 void print_shape_info(const Shape& s) {
-    Info type = dynamic_type_of(s);
+    TypeInfo type = dynamic_type_of(s);
     
     println("Shape type: {}", name_of(type));
     println("Area: {}", s.area());
     
-    // 遍历字段（运行时）：运行时 Info 用 fields_of，
+    // 遍历字段（运行时）：运行时 TypeInfo 用 fields_of，
     // nonstatic_data_members_of 只用于编译期生成场景
     for (auto field : fields_of(type)) {
         println("  {}: {}", name_of(field), size_of(type_of(field)));

@@ -665,8 +665,8 @@ auto done = data.to_device();  // Release 语义
 
 done.wait();  // Acquire 语义，保证 GPU 能看到写入
 
-// GPU kernel
-gpu::parallel_for(range, [=](int32_t i) {
+// GPU 并行计算
+parallel<Device::Gpu>(range, [=](int32_t i) {
     // 能看到 CPU 写入的 42
     int32_t val = data[0];
 });

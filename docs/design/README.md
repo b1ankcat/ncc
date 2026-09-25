@@ -47,7 +47,7 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - 引用和指针（标准 C++ 语义）
 
 - **[04-reflection.md](04-reflection.md)** - 反射系统
-  - 统一的反射句柄（Info）
+  - 统一的反射句柄（TypeInfo 和 ExprInfo）
   - 编译期代码生成运行时元数据和访问器
   - 运行时类型、字段和方法查询/调用
 
@@ -88,7 +88,7 @@ NCC 是基于 C++26 的现代系统编程语言，通过"只删不加"的设计�
   - 依赖解析（约束交集 + 最低可用版本）
   - 全局缓存（内容寻址）
   - 循环依赖和幽灵依赖处理
-  - ccc 命令行工具
+  - ncc 命令行工具
 
 - **[11-build-system.md](11-build-system.md)** - 构建系统
   - 构建脚本（build.ncc）
@@ -190,15 +190,15 @@ parse("{...}");
 ## 快速开始
 
 ```bash
-# 安装 ccc
-curl -sSf https://install.ccc-lang.org | sh
+# 安装 ncc
+curl -sSf https://install.ncc-lang.org | sh
 
 # 创建新项目
-ccc new myapp
+ncc new myapp
 cd myapp
 
 # 构建并运行
-ccc run
+ncc run
 ```
 
 ## 阅读顺序
@@ -212,10 +212,10 @@ ccc run
 
 ## 社区与支持
 
-- **GitHub**: https://github.com/ccc-lang/ccc
-- **文档**: https://docs.ccc-lang.org
-- **论坛**: https://discuss.ccc-lang.org
-- **Discord**: https://discord.gg/ccc-lang
+- **GitHub**: https://github.com/ncc-lang/ncc
+- **文档**: https://docs.ncc-lang.org
+- **论坛**: https://discuss.ncc-lang.org
+- **Discord**: https://discord.gg/ncc-lang
 
 ## 许可证
 

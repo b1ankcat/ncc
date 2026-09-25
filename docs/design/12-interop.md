@@ -316,7 +316,7 @@ export extern "C" {
 
 ```bash
 # 编译时自动生成 C 头文件
-ccc build --generate-c-header
+ncc build --generate-c-header
 
 # 生成 mylib.h
 ```
